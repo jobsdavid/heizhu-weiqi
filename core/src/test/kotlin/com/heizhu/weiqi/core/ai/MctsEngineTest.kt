@@ -127,10 +127,13 @@ class MctsEngineTest {
                     "外围耗时=${elapsed}ms"
             )
 
-            // 时间预算 3000ms，留出宽裕余量防止 CI 抖动
+            // 预算取难度自带的，**不要把 3000 写死**：
+            // 大师档从 3 秒改成 6 秒时，写死的断言不会失败，只会静默变成
+            // "允许 8000ms" 的宽松条件，而消息里还写着 3000ms 预算 —— 测试失去意义。
+            val budget = Difficulty.MASTER.timeBudgetMs
             assertTrue(
-                "大师档耗时 ${stats.elapsedMs}ms 明显超出 3000ms 预算",
-                stats.elapsedMs < 8000,
+                "大师档耗时 ${stats.elapsedMs}ms 明显超出 ${budget}ms 预算",
+                stats.elapsedMs < budget + 2_000,
             )
             assertTrue("应当完成过搜索", stats.playouts > 0)
         }

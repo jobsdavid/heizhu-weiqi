@@ -30,3 +30,5 @@ rootProject.name = "WeiqiTV"
 
 include(":core")
 include(":app")
+// 棋力评测台：用 KataGo 当考官量化本引擎棋力（详见 bench/ 与 tools/katago 的说明）
+include(":bench")

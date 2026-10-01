@@ -85,6 +85,15 @@ class MctsEngine(
         color: Stone,
         difficulty: Difficulty,
         rng: Random = Random.Default,
+        /**
+         * 模拟次数上限，null = 用 [Difficulty.maxPlayouts]。
+         *
+         * 存在的理由：**评测保真**。同一档在电视上受时间限制（如 9 路大师 3 秒只跑
+         * 3222 次），在更快的开发机上却会跑满 maxPlayouts（20000 次），
+         * 于是评测出来的棋力比电视上真实的高一截。评测台用它把次数封到电视的实测值。
+         * 生产路径不传这个参数，行为与以前完全一致。
+         */
+        playoutCap: Int? = null,
     ): Int {
         val startedAt = System.currentTimeMillis()
         val rootCandidates = generateRootCandidates(board, color, difficulty)
@@ -122,7 +131,8 @@ class MctsEngine(
         var playouts = 0
         var countdownToCancelCheck = CANCEL_CHECK_INTERVAL
 
-        while (playouts < difficulty.maxPlayouts) {
+        val playoutLimit = playoutCap ?: difficulty.maxPlayouts
+        while (playouts < playoutLimit) {
             // 时间预算优先：宁可少搜，也不能让孩子等
             if (System.currentTimeMillis() >= deadline) break
 
