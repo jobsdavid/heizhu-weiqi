@@ -1,6 +1,12 @@
 // ============================================================
 // app 模块 — Android 应用（Compose for TV 界面 + 本地存储）
 // ============================================================
+// 注意：Gradle 的 Kotlin DSL 里 `java` 会被 Java 插件扩展**遮蔽**，
+// 直接写 `java.util.Properties` 会报 Unresolved reference 'util'。
+// 必须在文件顶部显式 import 才能用。
+import java.io.File
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     // 故意不应用 org.jetbrains.kotlin.android：AGP 9.0 起内置 Kotlin 支持，
@@ -97,6 +103,49 @@ kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
+}
+
+// ============================================================
+// 本地真实头像（可选，且**绝不进版本控制**）
+//
+// 公开仓库里只有生成的卡通占位头像。真实照片放在仓库**外面**，路径写在
+// local.properties（该文件本来也不进版本控制）的 avatars.dir 里：
+// 设了就优先用真照片，没设就用仓库里的占位图。
+//
+// 这样「推上去的代码」与「你本地跑的应用」可以不一样，而照片永远不会进 git 历史。
+// 为什么不放仓库里再加 .gitignore：那样只隔了一层可能被绕过的规则（git add -f、
+// 换台机器忘了配），放到仓库外面则是**结构上**不可能被提交。
+// ============================================================
+run {
+    val lp = rootProject.file("local.properties")
+    if (!lp.exists()) return@run
+    val dir = Properties()
+        .apply { lp.inputStream().use { load(it) } }
+        .getProperty("avatars.dir")
+        ?: return@run
+    val res = File(dir)
+    if (!res.isDirectory) {
+        logger.lifecycle("avatars.dir 指向的目录不存在，使用仓库里的卡通占位头像：$dir")
+        return@run
+    }
+    // **必须校验**：avatars.dir 要指向「资源目录的父目录」（里面是 drawable-nodpi/），
+    // 不是直接指向 drawable-nodpi —— 指错了 AGP 什么也找不到，而且**静默不生效**。
+    // 我自己就在这里踩过一次：构建日志一切正常，装到电视上还是卡通头像。
+    if (!File(res, "drawable-nodpi/avatar_boss.png").isFile) {
+        logger.lifecycle(
+            "avatars.dir 里没有 drawable-nodpi/avatar_boss.png，忽略该设置（用占位头像）：$dir" +
+                "｜正确写法是资源目录的父目录，比如 .../weiqi-avatars（里面放 drawable-nodpi/）",
+        )
+        return@run
+    }
+    // 用 buildType 对应的 **source set** 覆盖 main。
+    // AGP 的资源优先级是「buildType source set > main」，这是文档保证的顺序，
+    // 比在同级 srcDirs 里赌先后可靠（我先赌了一次，赌反了：
+    // 构建日志一切正常，装到电视上还是卡通头像）。
+    // 注意不是 `buildTypes.getByName("release").res` —— BuildType 在这个 AGP 版本没有 res。
+    android.sourceSets.getByName("release").res.srcDir(res)
+    android.sourceSets.getByName("debug").res.srcDir(res)
+    logger.lifecycle("使用本地真实头像：$dir")
 }
 
 // 让 UI 自测里的 println 显示出来 —— 布局尺寸、焦点位置这些实测值靠它输出
