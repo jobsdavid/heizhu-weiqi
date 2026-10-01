@@ -458,6 +458,21 @@ class TvScreenLayoutTest {
      * 第一版是「返回键直接悔棋」，理由是孩子下错棋的挫败感是劝退主因；
      * 但真机上误碰返回键会让刚下的一手莫名消失，那比下错棋更崩溃。
      */
+    /**
+     * 回归用例：引擎里「候选池随预算加宽」的基准，必须等于 app 设置项的最小值。
+     *
+     * 两处不一致时不会有任何报错，只会表现成"某一档忽然变慢/变弱"——
+     * 这类静默错误只能靠断言守住，不能靠注释约定。
+     */
+    @Test
+    fun `思考预算基准与设置下限一致`() {
+        assertEquals(
+            "MctsEngine.MIN_THINK_BUDGET_MS 必须等于设置项首项（默认值）",
+            SettingsStore.AI_THINK_OPTIONS.first(),
+            com.heizhu.weiqi.core.ai.MIN_THINK_BUDGET_MS,
+        )
+    }
+
     /** 取「包含某段文字」的节点包围盒，没有则报错。 */
     private fun boxOf(text: String): Rect =
         rule.onNodeWithText(text).fetchSemanticsNode().boundsInRoot

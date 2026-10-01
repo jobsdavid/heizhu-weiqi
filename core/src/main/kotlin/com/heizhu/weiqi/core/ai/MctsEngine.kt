@@ -87,6 +87,8 @@ class MctsEngine(
      */
     private val PASS_GAIN_THRESHOLD = 2
 
+
+
     /**
      * 上一次搜索的统计。用于**实测目标设备上的算力**——
      * 电视 CPU 比开发机弱得多，「每秒能跑多少次 playout」直接决定
@@ -258,12 +260,15 @@ class MctsEngine(
         // 多出来的时间**完全没用上**，那个设置就是个摆设（设置项注释里写的
         // "用满的方式是加深前瞻"描述的是一个还没实现的行为）。
         //
-        // 修法：预算每超过该档自带预算一档，候选池就跟着放宽一档。
+        // 修法：预算每超过**设置下限**一档，候选池就跟着放宽一档。
         // 因为下面的评估循环本来就在截止时间退出，"池子变大"必然转化为"搜得更宽"，
         // 而不是空转；时间没给够也不会硬凑（想清楚就提前收工，这是"最长"的语义）。
-        // 上限 3 倍：既要让慢档真正用上预算，也不能让低难度档把孩子晾在那儿。
-        val widen = (budgetMs.toDouble() / difficulty.timeBudgetMs.coerceAtLeast(1))
-            .coerceIn(1.0, 3.0)
+        //
+        // ⚠️ 基准必须用**设置下限**（app 里那一项的默认值），不能用该档自带的预算：
+        // 自带预算越小的档（低难度档）算出来的倍数越大，等于"越弱的档加宽越多"，
+        // 恰好把低档拖慢、把高档限制住 —— 方向整个反了。默认值加宽倍数为 1，
+        // 即默认设置下各档行为与加宽前完全一致，只有用户主动调大才会变。
+        val widen = (budgetMs.toDouble() / MIN_THINK_BUDGET_MS).coerceIn(1.0, 3.0)
         val poolSize = (difficulty.netTopK * widen).toInt().coerceAtLeast(difficulty.netTopK)
         val byPolicy = (0 until cellCount)
             .filter { board.cells[it].toInt() == 0 && rootEval.policy[it] > 0f }
@@ -892,3 +897,15 @@ class MctsEngine(
         private const val ESCAPE_ORDER_BONUS = 30
     }
 }
+
+/**
+ * app 设置里「AI 最长思考时间」的**默认值**（也是该选项的最小值），毫秒。
+ *
+ * 用途：给「候选池随预算加宽」定基准 —— 默认设置下加宽倍数为 1（各档行为与加宽前
+ * 完全一致），只有用户主动调大才加宽。
+ *
+ * ⚠️ 必须与 app 的 `SettingsStore.AI_THINK_OPTIONS.first()` 一致。两处不一致时
+ * 不会报错，只会表现成"某一档忽然变慢/变弱"，极难排查 ——
+ * 所以有回归用例 `思考预算基准与设置下限一致` 守着这一条。
+ */
+const val MIN_THINK_BUDGET_MS = 15_000L
