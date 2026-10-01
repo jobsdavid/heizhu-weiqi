@@ -104,9 +104,13 @@ class MctsEngine(
         //   1. 空点 ≤ 40%：否则数子这个判据本身会退化 —— 空盘上「所有空点都算我的」，
         //      随手下一手也「不提高地盘」，会直接把开局误判成收工。
         //   2. 只要还有任何一手能提高（子数 + 围空），就继续下 —— 比如还有单官要收。
-        if (board.lastMove.isPass && isSettledEnough(board) &&
-            !anyMoveImprovesScore(board, color, rootCandidates)
-        ) {
+        //
+        // 注意：**不要求「对方刚停过手」**。
+        // 原来带了 `board.lastMove.isPass &&`，结果是：只要对手一直有子可下
+        // （哪怕是填自己的地），这一方就永远陪着下，对局永远结束不了 ——
+        // 真机上黑猪大人直接问「什么时候赢？有一方都没地方下子了还不判输赢吗？」。
+        // 围棋的正确行为就是「我没用的一手可下就停手」，对手停不停是他的事。
+        if (isSettledEnough(board) && !anyMoveImprovesScore(board, color, rootCandidates)) {
             lastStats = SearchStats(0, System.currentTimeMillis() - startedAt, rootCandidates.size)
             return PASS_MOVE
         }

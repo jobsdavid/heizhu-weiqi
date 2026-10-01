@@ -218,6 +218,37 @@ class AllDifficultyLevelsTest {
         assertEquals("局面已定、对方停一手时应当收工停一手", -1, move)
     }
 
+    /**
+     * 局面已定时，**即使对方没有停手**也必须收工。
+     *
+     * 原来的实现多带了一个条件「对方刚停过手」，于是只要对手一直有子可下
+     * （哪怕是填自己的地），这一方就永远陪着下，对局永远结束不了 ——
+     * 真机上黑猪大人的问题就是「有一方都没地方下子了还不判输赢吗」。
+     */
+    @Test
+    fun `局面已定时对方没停手也应当收工`() {
+        val b = Board(9)
+        val hole = setOf(2 to 2, 2 to 3, 3 to 2, 3 to 3)
+        for (y in 0 until 9) {
+            for (x in 0..5) {
+                if ((x to y) in hole) continue
+                b.play(x, y, Stone.BLACK)
+            }
+        }
+        val whiteEyes = setOf(7 to 2, 7 to 6)
+        for (y in 0 until 9) {
+            for (x in 6..8) {
+                if ((x to y) in whiteEyes) continue
+                b.play(x, y, Stone.WHITE)
+            }
+        }
+        // ⚠️ 刻意**不调用** b.pass() —— 对方（白）刚刚并没有停手
+
+        val move = pick(9, b, Stone.BLACK, Difficulty.INTERMEDIATE, 3)
+        println("  对方未停手时的选择 = ${name(9, move)}（-1 = 停一手，期望如此）")
+        assertEquals("局面已定时不应当继续填自己的地", -1, move)
+    }
+
     /** 反向闸门：开局阶段对方停一手，**绝不能**收工（否则会直接数子出个荒唐比分）。 */
     @Test
     fun `开局对方停一手不应当收工`() {

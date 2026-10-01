@@ -116,6 +116,8 @@ fun GameScreen(
     val focusRequester = remember { FocusRequester() }
     var heldDirection by remember { mutableStateOf<Dir?>(null) }
     var menuOpen by remember { mutableStateOf(false) }
+    // 返回键悔棋需要一个确认框：误碰一下就把刚下的一手撤掉，孩子会直接崩溃
+    var confirmUndo by remember { mutableStateOf(false) }
     // 暂停菜单是自己画的（不是 Compose 的焦点组件），所以选中位置必须自行维护，
     // 并由父级的 handleKey 分发按键 —— 否则菜单项永远选不中。
     var menuIndex by remember { mutableStateOf(0) }
@@ -145,6 +147,12 @@ fun GameScreen(
         if (ui.thinking) onClearHint()
     }
 
+    /** 请求悔棋：先弹确认框，确认后才真的撤。 */
+    fun requestUndo() {
+        if (ui.isOver) return
+        confirmUndo = true
+    }
+
     fun handleKey(event: androidx.compose.ui.input.key.KeyEvent): Boolean {
         fun dirOf(key: Key): Dir? = when (key) {
             Key.DirectionUp -> Dir.UP
@@ -152,6 +160,23 @@ fun GameScreen(
             Key.DirectionLeft -> Dir.LEFT
             Key.DirectionRight -> Dir.RIGHT
             else -> null
+        }
+
+        // 悔棋确认框优先：打开时所有按键都归它，先于棋盘与暂停菜单被消费
+        if (confirmUndo) {
+            if (event.type != KeyEventType.KeyDown) return true
+            return when (event.key) {
+                Key.Enter, Key.DirectionCenter, Key.NumPadEnter -> {
+                    confirmUndo = false
+                    onUndo()
+                    true
+                }
+                Key.Back, Key.Menu -> {
+                    confirmUndo = false
+                    true
+                }
+                else -> true
+            }
         }
 
         // 暂停菜单打开时，所有按键都归菜单：先于棋盘被消费，不落到棋盘上
@@ -214,10 +239,14 @@ fun GameScreen(
             Key.Enter, Key.DirectionCenter, Key.NumPadEnter -> {
                 onConfirm(); true
             }
-            // 返回键直接悔棋，不弹确认框 —— 孩子下错棋的挫败感是劝退主因。
-            // 配额限制（每局 5 次）由 ViewModel 把关。
+            // 返回键悔棋 —— **必须弹确认框**。
+            //
+            // 第一版是「返回键直接悔棋」，理由是孩子下错棋的挫败感是劝退主因。
+            // 但真机上黑猪大人反馈：误碰一下返回键，刚下的一手就被撤了，更崩溃。
+            // 现在先弹一句「要悔棋吗？」，确认才撤；要接着下就再按一次返回键。
+            // 配额限制（每局 5 次）仍由 ViewModel 把关。
             Key.Back -> {
-                onUndo(); true
+                requestUndo(); true
             }
             Key.Menu -> {
                 menuOpen = true
@@ -235,7 +264,7 @@ fun GameScreen(
     // 兜底：正常情况下返回键由上面的 onPreviewKeyEvent 拦下来当悔棋用。
     // 但如果焦点因为某种原因丢失（例如被系统弹窗抢走），onPreviewKeyEvent 收不到事件，
     // 返回键就会冒泡到系统把整个应用关掉。这里兜一层，保证返回键始终是「悔棋」。
-    BackHandler { onUndo() }
+    BackHandler { requestUndo() }
 
     // 面板上显示「提了多少子」。棋盘层记的是「黑方提掉的白子」，
     // 所以必须按各自实际执的颜色换算一次，否则两个面板的数字会串。
@@ -346,6 +375,13 @@ fun GameScreen(
             ToastBanner(message, modifier = Modifier.align(Alignment.TopCenter).padding(top = 20.dp))
         }
 
+        if (confirmUndo) {
+            UndoConfirmDialog(
+                remaining = ui.undoRemaining,
+                onConfirm = { confirmUndo = false; onUndo() },
+            )
+        }
+
         if (menuOpen) {
             PauseMenu(
                 ui = ui,
@@ -402,7 +438,9 @@ private fun TurnIndicator(ui: GameUi) {
         )
         Spacer(Modifier.height(3.dp))
         Text(
-            text = "第 ${ui.moveCount} 手 · 悔棋 ${ui.undoRemaining}",
+            // 文案必须是「可悔棋 N 次」而不是「悔棋 N」——
+            // 后者读起来像「已经悔了 5 次」，真机上黑猪大人就被这个误导过
+            text = "第 ${ui.moveCount} 手 · 可悔棋 ${ui.undoRemaining} 次",
             color = TextDim,
             fontSize = 18.sp,
         )
@@ -499,6 +537,9 @@ private fun PlayerPanel(
 private fun HintBox(ui: GameUi) {
     val hint = when {
         ui.isOver -> "对局结束"
+        // 无处可下时给出**明确的收工指引**：不加这条，孩子会一直找不到落子点，
+        // 又不知道可以停一手，对局就永远结束不了
+        ui.playerHasNoLegalMove -> "你没地方下了 · 按菜单键 → 「停一手」收工数子"
         ui.thinking -> "黑猪大人正在思考…"
         ui.previewIllegal != null -> ui.previewIllegal
         ui.previewCapture > 0 -> "落在光标处可以吃掉对方 ${ui.previewCapture} 子"
@@ -506,6 +547,7 @@ private fun HintBox(ui: GameUi) {
     }
     val color = when {
         ui.isOver -> TextSecondary
+        ui.playerHasNoLegalMove -> FocusRing
         ui.thinking -> Warning
         ui.previewIllegal != null -> Danger
         ui.previewCapture > 0 -> Success
@@ -573,6 +615,62 @@ private fun ToastBanner(message: String, modifier: Modifier = Modifier) {
             .padding(horizontal = 26.dp, vertical = 13.dp),
     ) {
         Text(text = message, color = TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+/**
+ * 悔棋确认框。
+ *
+ * 返回键是遥控器上最容易误碰的键之一 —— 第一版「返回键直接悔棋」的结果是
+ * 真机上黑猪大人反馈「有时候误点返回」，刚下的一手莫名消失比下错棋更让人崩溃。
+ * 所以先问一句：OK 确认，返回键继续下（再按一次返回键就是接着下）。
+ */
+@Composable
+private fun UndoConfirmDialog(
+    remaining: Int,
+    onConfirm: () -> Unit,
+) {
+    Box(
+        modifier = Modifier.fillMaxSize().background(Scrim),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .width(580.dp)
+                .clip(RoundedCornerShape(26.dp))
+                .background(Surface)
+                .border(3.dp, FocusRing, RoundedCornerShape(26.dp))
+                .padding(horizontal = 26.dp, vertical = 22.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = "要悔棋吗？",
+                color = TextPrimary,
+                fontSize = 34.sp,
+                fontWeight = FontWeight.Black,
+            )
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = "会撤销你和黑猪大人各一手 · 本局还剩 $remaining 次",
+                color = TextSecondary,
+                fontSize = 21.sp,
+            )
+            Spacer(Modifier.height(18.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "OK 确认悔棋",
+                    color = FocusRing,
+                    fontSize = 23.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.width(30.dp))
+                Text(
+                    text = "返回键 接着下",
+                    color = TextDim,
+                    fontSize = 23.sp,
+                )
+            }
+        }
     }
 }
 

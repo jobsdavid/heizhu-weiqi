@@ -74,6 +74,13 @@ data class GameUi(
     val lastCapturedPoints: IntArray = IntArray(0),
     /** 被提的那一方的颜色（用于画幽灵子）。[lastCapturedPoints] 为空时无意义。 */
     val lastCapturedColor: Stone = Stone.EMPTY,
+    /**
+     * 玩家已经「无处可下」（一个合法着法都没有：空点全被占，或全是自杀/自己的眼）。
+     *
+     * 界面据此给出明确的收工指引 —— 不加这个提示，孩子会一直找不到落子点、
+     * 又不知道可以停一手，对局就永远结束不了。
+     */
+    val playerHasNoLegalMove: Boolean = false,
 )
 
 /**
@@ -231,7 +238,9 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
             is com.heizhu.weiqi.core.game.MoveOutcome.Ok -> {
                 playMoveSound(outcome.capturedCount, isPlayer = true)
                 refreshFromGame()
-                launchAiIfNeeded()
+                // refreshFromGame 里可能已经把对局结算掉（棋盘满了 / 双方都没地方下），
+                // 所以这里必须先看 isOver，否则结果页永远不显示
+                if (state.isOver) onGameFinished() else launchAiIfNeeded()
             }
             com.heizhu.weiqi.core.game.MoveOutcome.Occupied -> {
                 soundPlayer.play(Sfx.ILLEGAL)
@@ -258,6 +267,9 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
         if (state.isOver) {
             onGameFinished()
         } else {
+            // 停一手必须说一声：不然界面上只是「手数 +1、没有任何子落下」，
+            // 孩子完全不知道刚才发生了什么
+            _ui.value = _ui.value.copy(toast = "你停了一手")
             launchAiIfNeeded()
         }
     }
@@ -361,9 +373,10 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
                     engineRef.findBestMove(state.board, state.aiColor, state.difficulty, searchRandom)
                 }
                 logSearchStats(engineRef, state)
+                val aiPassed = move < 0
                 val aiOutcome = state.play(move, state.aiColor)
                 if (aiOutcome is com.heizhu.weiqi.core.game.MoveOutcome.Ok) {
-                    playMoveSound(aiOutcome.capturedCount, isPlayer = false)
+                    if (!aiPassed) playMoveSound(aiOutcome.capturedCount, isPlayer = false)
                 } else {
                     // 兜底：引擎的候选都过了合法性校验，正常情况下这里不会走到。
                     // 但**一旦走到，对局会彻底卡死** —— 没有别的地方会再次触发 AI 落子，
@@ -371,6 +384,13 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
                     state.passMove(state.aiColor)
                 }
                 refreshFromGame()
+                if (aiPassed && !state.isOver) {
+                    // 对方停一手时给一句明确的话 —— 否则孩子只会看到「没落子」，
+                    // 不知道轮到自己、也不知道可以跟着停手收工
+                    _ui.value = _ui.value.copy(
+                        toast = "黑猪大人停了一手 —— 你也按菜单键「停一手」就能收工数子",
+                    )
+                }
                 if (state.isOver) onGameFinished()
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 // 被悔棋/退出取消：不改变棋局，仅恢复界面状态再向上抛。
@@ -415,8 +435,20 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
 
+        // 双方都落不下子 —— 对局实际上已经结束，直接数子定胜负。
+        //
+        // 围棋的正规做法是「双方各停一手」，但孩子不一定知道要去菜单里停一手；
+        // 而「两个人谁也放不下子」本身就是终局的铁证，自动结算不会误判。
+        if (!state.isOver &&
+            !hasAnyLegalMoveFor(state, Stone.BLACK) &&
+            !hasAnyLegalMoveFor(state, Stone.WHITE)
+        ) {
+            state.finishNow()
+        }
+
         _ui.value = previous.copy(
             cells = state.board.cells.copyOf(),
+            playerHasNoLegalMove = !state.isOver && !hasAnyLegalMoveFor(state, state.playerColor),
             lastCapturedPoints = capturedIdx,
             lastCapturedColor = when (capturedCode) {
                 1 -> Stone.BLACK
@@ -436,6 +468,26 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
             hintX = -1,
             hintY = -1,
         ).withPreview(computePreview(previous.cursorX, previous.cursorY))
+    }
+
+    /**
+     * 玩家手上还有没有任何一个**合法**着法。
+     *
+     * 注意这是「合法」而不是「有用」——空点全被占了、或者剩下的全是自杀点 /
+     * 自己的眼，都属于无处可下。棋盘快满时这种情况很常见，此时棋局就该收工了。
+     */
+    private fun hasAnyLegalMoveFor(
+        state: com.heizhu.weiqi.core.game.GameState,
+        color: Stone,
+    ): Boolean {
+        val size = state.size
+        val cells = state.board.cells
+        for (i in cells.indices) {
+            if (cells[i].toInt() != 0) continue
+            val out = state.board.preview(i % size, i / size, color)
+            if (out is com.heizhu.weiqi.core.rules.PlayOutcome.Ok) return true
+        }
+        return false
     }
 
     /**

@@ -413,6 +413,65 @@ class TvScreenLayoutTest {
         assertFocusedOn("退出")
     }
 
+    /** 渲染对局页并把 [undone] 接到悔棋回调上。 */
+    private fun renderGame(undone: () -> Unit) {
+        render {
+            GameScreen(
+                ui = sampleUi(9, thinking = false),
+                cursorSpeed = CursorSpeed.NORMAL,
+                onMoveCursor = { _, _ -> },
+                onJumpToRecentMove = {},
+                onConfirm = {},
+                onUndo = undone,
+                onPass = {},
+                onResign = {},
+                onHint = {},
+                onExit = {},
+                onConsumeToast = {},
+                onClearHint = {},
+            )
+        }
+        rule.waitForIdle()
+    }
+
+    /**
+     * 回归用例：返回键悔棋**必须先弹确认框**。
+     *
+     * 第一版是「返回键直接悔棋」，理由是孩子下错棋的挫败感是劝退主因；
+     * 但真机上误碰返回键会让刚下的一手莫名消失，那比下错棋更崩溃。
+     */
+    @Test
+    fun `对局页-返回键要先确认才悔棋`() {
+        var undone = 0
+        renderGame { undone++ }
+
+        pressOnFocused(Key.Back)
+        rule.onNodeWithText("要悔棋吗？").assertExists()
+        assertEquals("只按返回键不应真的悔棋", 0, undone)
+
+        pressOnFocused(Key.Enter)
+        assertEquals("确认后应当执行悔棋", 1, undone)
+    }
+
+    /** 再按一次返回键 = 接着下（取消），而不是继续悔棋。 */
+    @Test
+    fun `对局页-返回键再按一次是取消`() {
+        var undone = 0
+        renderGame { undone++ }
+
+        pressOnFocused(Key.Back)
+        pressOnFocused(Key.Back)
+        rule.onNodeWithText("要悔棋吗？").assertDoesNotExist()
+        assertEquals("取消后不应悔棋", 0, undone)
+    }
+
+    /** 「悔棋 5」会被读成「已经悔了 5 次」，必须是「可悔棋 N 次」。 */
+    @Test
+    fun `对局页-悔棋次数文案不产生歧义`() {
+        renderGame {}
+        rule.onNodeWithText("第 3 手 · 可悔棋 5 次").assertExists()
+    }
+
     @Test
     fun `对局页-有焦点可接收按键`() {
         render { GameScreen(sampleUi(9), CursorSpeed.NORMAL, { _, _ -> }, {}, {}, {}, {}, {}, {}, {}, {}, {}) }
