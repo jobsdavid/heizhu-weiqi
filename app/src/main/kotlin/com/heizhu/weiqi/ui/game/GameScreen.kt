@@ -58,6 +58,9 @@ import com.heizhu.weiqi.vm.GameUi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
+/** 暂停菜单的项数。选中项在 0..MENU_ITEM_COUNT-1 之间循环。 */
+private const val MENU_ITEM_COUNT = 6
+
 /** 方向键产生的移动意图 */
 private enum class Dir(val dx: Int, val dy: Int) {
     UP(0, -1), DOWN(0, 1), LEFT(-1, 0), RIGHT(1, 0)
@@ -99,6 +102,9 @@ fun GameScreen(
     val focusRequester = remember { FocusRequester() }
     var heldDirection by remember { mutableStateOf<Dir?>(null) }
     var menuOpen by remember { mutableStateOf(false) }
+    // 暂停菜单是自己画的（不是 Compose 的焦点组件），所以选中位置必须自行维护，
+    // 并由父级的 handleKey 分发按键 —— 否则菜单项永远选不中。
+    var menuIndex by remember { mutableStateOf(0) }
 
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
 
@@ -134,15 +140,39 @@ fun GameScreen(
             else -> null
         }
 
-        // 暂停菜单打开时，按键交给菜单处理
+        // 暂停菜单打开时，所有按键都归菜单：先于棋盘被消费，不落到棋盘上
         if (menuOpen) {
-            return when {
-                event.type == KeyEventType.KeyDown &&
-                    (event.key == Key.Back || event.key == Key.Menu) -> {
+            if (event.type != KeyEventType.KeyDown) return true
+            return when (event.key) {
+                Key.Back, Key.Menu -> {
                     menuOpen = false
                     true
                 }
-                else -> false
+                Key.DirectionUp -> {
+                    menuIndex = (menuIndex - 1 + MENU_ITEM_COUNT) % MENU_ITEM_COUNT
+                    true
+                }
+                Key.DirectionDown -> {
+                    menuIndex = (menuIndex + 1) % MENU_ITEM_COUNT
+                    true
+                }
+                Key.Enter, Key.DirectionCenter, Key.NumPadEnter -> {
+                    // 先关菜单再执行动作，避免动作改变状态后菜单还挂在屏幕上
+                    menuOpen = false
+                    when (menuIndex) {
+                        // 「继续下棋」不需要额外动作 —— 关掉菜单本身就是在继续。
+                        // （这里不能调 PauseMenu 的 onResume，它是那个 composable 的参数，
+                        //   在 handleKey 作用域里不可见。）
+                        0 -> Unit
+                        1 -> onUndo()
+                        2 -> onHint()
+                        3 -> onPass()
+                        4 -> onResign()
+                        else -> onExit()
+                    }
+                    true
+                }
+                else -> true
             }
         }
 
@@ -178,7 +208,9 @@ fun GameScreen(
                 onUndo(); true
             }
             Key.Menu -> {
-                menuOpen = true; true
+                menuOpen = true
+                menuIndex = 0
+                true
             }
             // 快捷跳跃：快速在最后几手落子处之间切换视图
             Key.MediaPlayPause, Key.Tab, Key.NumPadAdd -> {
@@ -260,6 +292,7 @@ fun GameScreen(
         if (menuOpen) {
             PauseMenu(
                 ui = ui,
+                selectedIndex = menuIndex,
                 onResume = { menuOpen = false },
                 onUndo = { menuOpen = false; onUndo() },
                 onHint = { menuOpen = false; onHint() },
@@ -437,6 +470,7 @@ private fun ToastBanner(message: String, modifier: Modifier = Modifier) {
 @Composable
 private fun PauseMenu(
     ui: GameUi,
+    selectedIndex: Int,
     onResume: () -> Unit,
     onUndo: () -> Unit,
     onHint: () -> Unit,
@@ -458,16 +492,22 @@ private fun PauseMenu(
         ) {
             Text(text = "暂停", color = TextPrimary, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(18.dp))
-            MenuButton("继续下棋", enabled = true, onClick = onResume)
+            MenuButton("继续下棋", enabled = true, focused = selectedIndex == 0, onClick = onResume)
             MenuButton(
                 label = if (ui.undoRemaining > 0) "悔棋（还剩 ${ui.undoRemaining} 次）" else "悔棋（已用完）",
                 enabled = ui.undoRemaining > 0,
+                focused = selectedIndex == 1,
                 onClick = onUndo,
             )
-            MenuButton("让电脑给个提示", enabled = !ui.thinking, onClick = onHint)
-            MenuButton("这一手停一手", enabled = true, onClick = onPass)
-            MenuButton("认输", enabled = true, danger = true, onClick = onResign)
-            MenuButton("退出这局", enabled = true, danger = true, onClick = onExit)
+            MenuButton(
+                "让黑猪大人给个提示",
+                enabled = !ui.thinking,
+                focused = selectedIndex == 2,
+                onClick = onHint,
+            )
+            MenuButton("这一手停一手", enabled = true, focused = selectedIndex == 3, onClick = onPass)
+            MenuButton("认输", enabled = true, danger = true, focused = selectedIndex == 4, onClick = onResign)
+            MenuButton("退出这局", enabled = true, danger = true, focused = selectedIndex == 5, onClick = onExit)
         }
     }
 }
@@ -476,6 +516,7 @@ private fun PauseMenu(
 private fun MenuButton(
     label: String,
     enabled: Boolean,
+    focused: Boolean,
     danger: Boolean = false,
     onClick: () -> Unit,
 ) {
@@ -489,8 +530,16 @@ private fun MenuButton(
             .fillMaxWidth()
             .padding(vertical = 5.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(SurfaceFocused)
-            .border(1.dp, if (danger) Danger.copy(alpha = 0.5f) else SurfaceBorder, RoundedCornerShape(10.dp))
+            .background(if (focused) SurfaceFocused else Surface)
+            .border(
+                width = if (focused) 3.dp else 1.dp,
+                color = when {
+                    focused -> CursorRing
+                    danger -> Danger.copy(alpha = 0.5f)
+                    else -> SurfaceBorder
+                },
+                shape = RoundedCornerShape(10.dp),
+            )
             .padding(horizontal = 22.dp, vertical = 12.dp),
     ) {
         Text(text = label, color = textColor)
