@@ -86,6 +86,14 @@ private enum class Dir(val dx: Int, val dy: Int) {
 // ============================================================
 
 /**
+ * 顶部信息行高度（26dp）。左栏顶部显示「总用时」，实测 19sp 中文行高 25.5dp，取 26dp。
+ *
+ * 两栏顶部必须**等高**：左右面板是被各自栏内的权重间距居中的，
+ * 一栏顶多一块、另一栏没有，两个面板就会一高一低（实测差 49px，肉眼能看出来）。
+ */
+private val TopInfoHeight = 26.dp
+
+/**
  * 状态胶囊槽位高度（40dp）。推导：胶囊 = 垂直内边距 5dp×2 + 20sp 中文行高（约 28sp）≈ 38~40dp。
  * 实测胶囊出现/消失让面板高度变化 100px（=50dp，含 10dp 间距），面板居中 → 上下各跳 50px。
  */
@@ -122,6 +130,38 @@ private val HintSlotHeight = 108.dp
  * 原因见下方常量注释：面板是由两个 weight(1f) 间距居中的，任一兄弟块的高度一变，
  * 面板就会上下跳。这类缺陷在真机上表现为「头像莫名往下掉」，极难从现象反推。
  */
+/** mm:ss；超过一小时才显示小时（别写出 61:30 这种）。 */
+private fun formatClock(ms: Long): String {
+    val total = (ms / 1000).coerceAtLeast(0L)
+    val h = total / 3600
+    val m = (total % 3600) / 60
+    val s = total % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+}
+
+/**
+ * 计时文案。`startAt <= 0` 表示状态里没有时间信息（例如界面自测的样例数据）→ 显示占位，
+ * 否则会算出「56 年」这种荒唐数字。
+ */
+private fun elapsedText(startAt: Long, now: Long): String =
+    if (startAt <= 0L) "--:--" else formatClock((now - startAt).coerceAtLeast(0L))
+
+/**
+ * 秒级时钟。**必须在界面本地刷新**：如果让 ViewModel 每秒推一次状态，
+ * 整个棋盘 Canvas 会跟着每秒重组一次 —— 为了几个数字把最贵的那块重画，不划算。
+ */
+@Composable
+private fun rememberNowMs(activeKey: Any?): Long {
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(activeKey) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(500)
+        }
+    }
+    return now
+}
+
 @Composable
 fun GameScreen(
     ui: GameUi,
@@ -316,6 +356,20 @@ fun GameScreen(
         // 纵向留白**上紧下松**：顶部只是视觉呼吸，而底部必须给电视的 overscan
         // 安全区留位置 —— 不少电视会把画面外圈裁掉几个百分点。布局闸门抓到过
         // 侧栏底部的「第 N 手·悔棋」贴到 y2=1064（距屏幕底仅 16px）。
+        // ---- 计时 ----
+        // 总时长（本局开始至今）、以及两侧各自的思考时长。
+        // 定义：从轮到自己开始，到落子/停一手为止 —— 所以它天然包含玩家移光标与
+        // AI 的搜索时间，正是看棋的人想知道的「这一手想了多久」。
+        // 正在思考的那一方，显示的是「已累计 + 这一手已经用掉的」，所以数字是活的。
+        val nowMs = rememberNowMs(ui.startedAtMs)
+        val totalText = elapsedText(ui.startedAtMs, nowMs)
+        val ongoingMs = (nowMs - ui.turnStartedAtMs).coerceAtLeast(0L)
+        val aiColor = if (ui.playerColor == Stone.BLACK) Stone.WHITE else Stone.BLACK
+        val bossThinkLive = ui.bossThinkMs +
+            if (!ui.isOver && ui.toMove == aiColor) ongoingMs else 0L
+        val playerThinkLive = ui.playerThinkMs +
+            if (!ui.isOver && ui.toMove == ui.playerColor) ongoingMs else 0L
+
         Row(
             modifier = Modifier
                 .fillMaxSize()
@@ -326,6 +380,18 @@ fun GameScreen(
                 modifier = Modifier.width(176.dp).fillMaxHeight(),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+                // 总用时放在**顶部的空白区** —— 这里是全屏最空的地方。
+                //
+                // 为什么不放棋盘正上方：那块只有 50px（棋盘自带半格留白），而且正落在电视
+                // overscan 裁切带里；要安全塞下得让棋盘缩约 6%，不值得。
+                // 为什么从底部信息块挪上来：放底部时底边到 y=1032，距屏幕底仅 48px，
+                // 正好压在裁切带上（本项目的闸门按「距边缘 40px 内」判风险）。
+                Box(
+                    modifier = Modifier.height(TopInfoHeight),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(text = "总用时 $totalText", color = TextDim, fontSize = 19.sp)
+                }
                 Spacer(Modifier.weight(1f))
                 PlayerPanel(
                     name = "黑猪大人",
@@ -333,12 +399,19 @@ fun GameScreen(
                     ringColor = AccentWarm,
                     stoneIsBlack = aiIsBlack,
                     captured = aiCaptured,
+                    thinkMs = bossThinkLive,
                     isTurn = !ui.isOver && ui.toMove == aiColor,
                     statusText = if (ui.thinking) "思考中…" else null,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.weight(1f))
-                TurnIndicator(ui)
+                // 与右栏提示区**等高**的槽：两栏底部结构一致，面板才会真正对齐。
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(HintSlotHeight),
+                    contentAlignment = Alignment.BottomCenter,
+                ) {
+                    TurnIndicator(ui)
+                }
             }
 
             // ---- 中间：棋盘占满全部可用高度 ----
@@ -375,6 +448,9 @@ fun GameScreen(
                 modifier = Modifier.width(176.dp).fillMaxHeight(),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+                // 与左栏顶部的「总用时」**等高占位**：两栏纵向结构必须一致，
+                // 否则两个面板一高一低。这是显示总用时带来的副作用，必须一起处理。
+                Spacer(Modifier.height(TopInfoHeight))
                 Spacer(Modifier.weight(1f))
                 PlayerPanel(
                     name = "黑猪勇士",
@@ -382,6 +458,7 @@ fun GameScreen(
                     ringColor = Accent,
                     stoneIsBlack = ui.playerColor == Stone.BLACK,
                     captured = playerCaptured,
+                    thinkMs = playerThinkLive,
                     isTurn = !ui.isOver && ui.toMove == ui.playerColor,
                     statusText = if (!ui.isOver && ui.toMove == ui.playerColor) "该你了" else null,
                     modifier = Modifier.fillMaxWidth(),
@@ -498,6 +575,8 @@ private fun PlayerPanel(
     ringColor: Color,
     stoneIsBlack: Boolean,
     captured: Int,
+    /** 该方累计思考时长。**恒定显示**，见下方注释。 */
+    thinkMs: Long,
     isTurn: Boolean,
     statusText: String?,
     modifier: Modifier = Modifier,
@@ -556,6 +635,14 @@ private fun PlayerPanel(
                 fontWeight = FontWeight.Black,
             )
         }
+        Spacer(Modifier.height(6.dp))
+        // 用时**恒定存在**（不是「想完才显示」）：这一列的高度必须固定，
+        // 否则面板会被上下两个 weight(1f) 间距推着跳（详见文件顶部「高度必须固定」）。
+        Text(
+            text = "用时 ${formatClock(thinkMs)}",
+            color = TextDim,
+            fontSize = 19.sp,
+        )
         // 状态胶囊（该你了 / 思考中…）的位置**必须恒定**：有则显示、无则留空。
         //
         // 原来的写法是「没状态就不渲染这一块」，于是面板自身高度随回合变化，

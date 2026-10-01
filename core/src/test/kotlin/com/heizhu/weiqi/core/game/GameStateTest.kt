@@ -249,4 +249,79 @@ class GameStateTest {
         assertEquals(Difficulty.ADVANCED, g.difficulty)
         assertEquals(Stone.WHITE, g.playerColor)
     }
+
+    // ===============================================================
+    // 时长统计
+    // ===============================================================
+
+    /**
+     * 假时钟。累计时长这类断言**必须**能确定性地控制时间 ——
+     * 用真实时钟就得靠 sleep，测试会变成不可复现的玄学。
+     */
+    private class FakeClock(var now: Long = 1_000_000L) {
+        val read: () -> Long get() = { now }
+        fun advance(ms: Long) { now += ms }
+    }
+
+    @Test
+    fun thinkTime_accumulatesPerSide() {
+        val c = FakeClock()
+        // 玩家执白 → 黑（AI）先手
+        val g = GameState(9, Difficulty.BEGINNER, Stone.WHITE, clock = c.read)
+
+        c.advance(3_000)
+        g.play(2, 2, Stone.BLACK)      // AI 想 3 秒
+        c.advance(5_000)
+        g.play(6, 6, Stone.WHITE)      // 玩家想 5 秒
+        c.advance(1_000)
+        g.play(2, 3, Stone.BLACK)      // AI 再想 1 秒
+
+        assertEquals("AI（黑）累计 4 秒", 4_000L, g.thinkMs(Stone.BLACK))
+        assertEquals("玩家（白）累计 5 秒", 5_000L, g.thinkMs(Stone.WHITE))
+        assertEquals("总时长", 9_000L, g.elapsedMs)
+    }
+
+    @Test
+    fun thinkTime_rewindsWithUndo() {
+        val c = FakeClock()
+        val g = GameState(9, Difficulty.BEGINNER, Stone.WHITE, clock = c.read)
+
+        // 真实对局顺序：AI 先手 → 玩家 → AI 应手。悔棋发生在「AI 刚应完手」这一刻，
+        // 所以最后落子的应该是 AI。
+        // （第一版我把最后设成玩家自己落的，于是只退 1 步，期望值算错 —— 测试挂了，
+        //   但挂的是我的期望，不是实现。）
+        c.advance(2_000); g.play(2, 2, Stone.BLACK)     // AI   想 2 秒
+        c.advance(4_000); g.play(6, 6, Stone.WHITE)     // 玩家 想 4 秒
+        c.advance(1_000); g.play(2, 3, Stone.BLACK)     // AI   应 1 秒
+        assertEquals(3_000L, g.thinkMs(Stone.BLACK))
+        assertEquals(4_000L, g.thinkMs(Stone.WHITE))
+
+        assertTrue(g.undo())            // 退掉玩家那一手 + AI 的应手（2 步，消耗 1 次配额）
+        // 时长必须跟着退，否则面板上的数字会和棋谱对不上。
+        // 退到「玩家落子之前」= 只剩 AI 的第一手 2 秒，玩家 0 秒
+        assertEquals("悔棋后 AI 这一手的时间被退掉", 2_000L, g.thinkMs(Stone.BLACK))
+        assertEquals("悔棋后玩家这一手的时间被退掉", 0L, g.thinkMs(Stone.WHITE))
+    }
+
+    @Test
+    fun thinkTime_countsPassToo() {
+        val c = FakeClock()
+        val g = GameState(9, Difficulty.BEGINNER, Stone.WHITE, clock = c.read)
+        c.advance(3_500)
+        g.passMove(Stone.BLACK)
+        // 停一手不走 commitMove —— 漏记就会出现「想得最久的那一手没算时间」
+        assertEquals(3_500L, g.thinkMs(Stone.BLACK))
+    }
+
+    @Test
+    fun thinkTime_restartClearsEverything() {
+        val c = FakeClock()
+        val g = GameState(9, Difficulty.BEGINNER, Stone.WHITE, clock = c.read)
+        c.advance(5_000); g.play(2, 2, Stone.BLACK)
+        c.advance(5_000); g.play(6, 6, Stone.WHITE)
+        g.restart()
+        assertEquals(0L, g.thinkMs(Stone.BLACK))
+        assertEquals(0L, g.thinkMs(Stone.WHITE))
+        assertEquals(0L, g.elapsedMs)
+    }
 }

@@ -81,6 +81,19 @@ data class GameUi(
      * 又不知道可以停一手，对局就永远结束不了。
      */
     val playerHasNoLegalMove: Boolean = false,
+    /**
+     * 本局开始时刻（epoch ms）。
+     *
+     * 时长由**界面**每秒本地重算，不让 ViewModel 按秒推状态 ——
+     * 后者会让整个棋盘（Canvas）每秒钟重组一次，为了几个数字不值当。
+     */
+    val startedAtMs: Long = 0,
+    /** 当前这一手开始的时刻。界面据此算出「正在想的这一方已经用掉多少」。 */
+    val turnStartedAtMs: Long = 0,
+    /** AI 已累计的思考时长（不含正在进行中的这一手）。 */
+    val bossThinkMs: Long = 0,
+    /** 玩家已累计的思考时长。 */
+    val playerThinkMs: Long = 0,
 )
 
 /**
@@ -167,6 +180,8 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
             // 光标从棋盘中央起步 —— 比从左上角(0,0)开始近得多
             cursorX = boardSize / 2,
             cursorY = boardSize / 2,
+            startedAtMs = state.startedAtMs,
+            turnStartedAtMs = state.turnStartedAtMs,
         )
         _screen.value = Screen.GAME
 
@@ -463,6 +478,10 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
             blackCaptured = state.board.blackCaptured,
             whiteCaptured = state.board.whiteCaptured,
             undoRemaining = state.undoRemaining,
+            startedAtMs = state.startedAtMs,
+            turnStartedAtMs = state.turnStartedAtMs,
+            bossThinkMs = state.thinkMs(state.aiColor),
+            playerThinkMs = state.thinkMs(state.playerColor),
             isOver = state.isOver,
             result = state.result,
             hintX = -1,

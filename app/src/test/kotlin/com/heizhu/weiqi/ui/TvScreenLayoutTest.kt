@@ -201,6 +201,11 @@ class TvScreenLayoutTest {
             whiteCaptured = 0,
             cursorX = 4, cursorY = 4,
             previewCapture = 2,
+            // 时长：给一组真实值，让「用时 / 总用时」真渲染出来（默认 0 会显示占位 "--:--"）
+            startedAtMs = System.currentTimeMillis() - 83_000,
+            turnStartedAtMs = System.currentTimeMillis() - 12_000,
+            bossThinkMs = 21_000,
+            playerThinkMs = 50_000,
         )
     }
 
@@ -457,6 +462,9 @@ class TvScreenLayoutTest {
      *
      * 判据用面板标题（「黑猪大人」/「黑猪勇士」）的 y 坐标 —— 它是面板内容的第一行文字，
      * 面板一动它必动。这样测的是**结果**（面板有没有跳），而不是某个具体实现细节。
+     *
+     * 后续往面板里加「用时」这类新行时，这条用例会一起守住：新行必须恒定存在，
+     * 不能是「有时才显示」。
      */
     @Test
     fun `对局页-面板位置不得随提示与回合状态变化`() {
@@ -512,6 +520,32 @@ class TvScreenLayoutTest {
 
         assertEquals("左侧面板位置随状态漂移 %.1f px".format(spreadB), 0f, spreadB, 0.5f)
         assertEquals("右侧面板位置随状态漂移 %.1f px".format(spreadW), 0f, spreadW, 0.5f)
+
+        // 两栏纵向结构必须一致：否则两个面板一高一低（曾因左栏顶部多一块「总用时」
+        // 而差 49px）。这条断言把「对称」也钉住，不只是「不漂移」。
+        val off = kotlin.math.abs(boss.first() - warrior.first())
+        assertEquals("左右面板应对齐，实际差 %.1f px".format(off), 0f, off, 2f)
+    }
+
+    /**
+     * 时长显示：两个玩家的「用时」各一处 + 左侧信息块的「总用时」一处。
+     *
+     * 断言用「包含」而不是精确文案 —— 时钟是活的（界面每 500ms 本地重算），
+     * 精确断言秒数会变成随机失败的测试。
+     */
+    @Test
+    fun `对局页-显示总用时与双方思考时长`() {
+        renderGame {}
+        val hits = textNodes().map { it.first }.filter { it.contains("用时") }
+        assertEquals("应为「左侧用时 + 右侧用时 + 总用时」共 3 处，实际：$hits", 3, hits.size)
+        assertTrue(
+            "必须有一处是总用时，实际：$hits",
+            hits.any { it.startsWith("总用时") },
+        )
+        assertTrue(
+            "两侧都要有各自的用时，实际：$hits",
+            hits.count { it.startsWith("用时") } == 2,
+        )
     }
 
     @Test

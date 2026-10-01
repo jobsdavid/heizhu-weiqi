@@ -68,6 +68,8 @@ class GameState(
     val difficulty: Difficulty,
     val playerColor: Stone,
     val maxUndoCount: Int = DEFAULT_MAX_UNDO,
+    /** 时钟。默认走系统时间；测试注入假时钟才能确定性地断言累计时长。 */
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
 
     val board: Board = Board(size)
@@ -106,7 +108,22 @@ class GameState(
     val isAiTurn: Boolean get() = !isOver && toMove == aiColor
 
     private var consecutivePasses = 0
-    private var startedAt: Long = System.currentTimeMillis()
+    private var startedAt: Long = clock()
+
+    /** 当前这一手是从什么时候开始算的（用于分边累计思考时长）。 */
+    private var turnStartedAt: Long = startedAt
+
+    /**
+     * 双方累计思考时长。
+     *
+     * 定义「思考时长」= 从轮到自己开始，到落子/停一手为止。所以它天然包含玩家的
+     * 移光标时间与 AI 的搜索时间 —— 这正是看棋的人想知道的「这一手想了多久」。
+     *
+     * 这两个值进悔棋快照，悔棋时跟着一起回退：否则手数回去了、时长不退，
+     * 面板上的数字会和棋谱对不上。
+     */
+    private var blackThinkMs: Long = 0
+    private var whiteThinkMs: Long = 0
 
     /** 悔棋快照栈。每个元素是「走这一步之前」的完整局面。 */
     private val history = ArrayList<Snapshot>()
@@ -119,6 +136,9 @@ class GameState(
         val whiteCaptured: Int,
         val toMove: Stone,
         val consecutivePasses: Int,
+        val blackThinkMs: Long,
+        val whiteThinkMs: Long,
+        val turnStartedAt: Long,
     )
 
     /** 重新开始一局（保留尺寸/难度/执子设置）。 */
@@ -131,7 +151,10 @@ class GameState(
         result = null
         undoCount = 0
         consecutivePasses = 0
-        startedAt = System.currentTimeMillis()
+        startedAt = clock()
+        turnStartedAt = startedAt
+        blackThinkMs = 0
+        whiteThinkMs = 0
     }
 
     // ===============================================================
@@ -189,6 +212,7 @@ class GameState(
 
         pushSnapshot()
         board.pass()
+        recordThinkTime(color)
         _moves.add(Move(index = PASS_INDEX, color = color, capturedCount = 0))
         consecutivePasses++
 
@@ -200,12 +224,42 @@ class GameState(
         return MoveOutcome.Ok(0)
     }
 
+    /**
+     * 把「从轮到自己到现在」的时长记到落子方头上，并把计时起点推到现在。
+     *
+     * **落子与停一手都要调**：停一手（passMove）不走 commitMove，漏了它就会出现
+     * 「停一手那一手没算时长」，而停一手恰恰常常是想得最久的一手。
+     */
+    private fun recordThinkTime(color: Stone) {
+        val now = clock()
+        val spent = (now - turnStartedAt).coerceAtLeast(0L)
+        if (color == Stone.BLACK) blackThinkMs += spent else whiteThinkMs += spent
+        turnStartedAt = now
+    }
+
     /** 落子成功后的登记。快照已由调用方在落子前取好。 */
     private fun commitMove(index: Int, color: Stone, capturedCount: Int) {
+        recordThinkTime(color)
         _moves.add(Move(index = index, color = color, capturedCount = capturedCount))
         consecutivePasses = 0
         toMove = toMove.opponent
     }
+
+    // ===============================================================
+    // 时长
+    // ===============================================================
+
+    /** 本局开始的时刻（epoch ms）。界面本地做秒级刷新，不走 ViewModel。 */
+    val startedAtMs: Long get() = startedAt
+
+    /** 当前这一手开始的时刻（epoch ms）。 */
+    val turnStartedAtMs: Long get() = turnStartedAt
+
+    /** 本局已进行的时长。 */
+    val elapsedMs: Long get() = (clock() - startedAt).coerceAtLeast(0L)
+
+    /** 某一方**已完成**的累计思考时长（不含正在进行的这一手）。 */
+    fun thinkMs(color: Stone): Long = if (color == Stone.BLACK) blackThinkMs else whiteThinkMs
 
     private fun pushSnapshot() {
         history.add(
@@ -217,6 +271,9 @@ class GameState(
                 whiteCaptured = board.whiteCaptured,
                 toMove = toMove,
                 consecutivePasses = consecutivePasses,
+                blackThinkMs = blackThinkMs,
+                whiteThinkMs = whiteThinkMs,
+                turnStartedAt = turnStartedAt,
             )
         )
     }
@@ -231,6 +288,11 @@ class GameState(
         )
         toMove = snapshot.toMove
         consecutivePasses = snapshot.consecutivePasses
+        blackThinkMs = snapshot.blackThinkMs
+        whiteThinkMs = snapshot.whiteThinkMs
+        // 悔棋后重新计时：刚恢复的这一手从「现在」开始算，
+        // 否则恢复出来的 turnStartedAt 是很久以前，下一手会把悔棋期间的时间也算进去
+        turnStartedAt = clock()
     }
 
     // ===============================================================
