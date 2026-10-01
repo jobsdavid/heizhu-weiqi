@@ -61,10 +61,16 @@ import com.heizhu.weiqi.ui.theme.TextSecondary
  * **上下键换位置、左右键改值**，并且每一行都是**竖排**的（视觉上右边没有东西，
  * 用户自然会用上下键）。
  *
- * ## 布局预算（1080p）
- * 左列三行选择器各约 234px + 两个 10dp 间距 = 742px，可用约 770px；
- * 右列「关于」卡片 + 返回按钮约 530px。见 [TvOptionRow] 里关于行高的注释 ——
- * 行高一改，这两处预算都要重算。
+ * ## 布局预算（1080p）—— 四行是硬挤出来的，改任何一处都要重跑本机布局测试
+ *
+ * 可用高度约 770px。前三行按原形态（标题行 + 芯片行）各约 202px，三行刚好；**第四行
+ * 必然溢出** —— 实测过：加上第四行后它的四个芯片全部被压成 0px，整行消失。
+ * 所以四行必须走 [TvOptionRow] 的 compact 形态（芯片与标题同一行），并配合：
+ *   · 说明文字**不内联**（内联会把最后几个芯片挤成 0px，实测挨个消失）
+ *   · 芯片行纵向内边距 5dp → 3dp、单个芯片 5dp → 3dp
+ *   · 行间距 10dp → 6dp
+ * 这样每行约 190px，四行 + 三个间距 ≈ 780px —— 仍然贴边，所以**这里没有任何余量**：
+ * 再加一行、或把任何 padding 调大 1dp，都必须先重算预算。
  */
 @Composable
 fun SettingsScreen(
@@ -74,9 +80,10 @@ fun SettingsScreen(
     var soundEnabled by remember { mutableStateOf(settings.soundEnabled) }
     var cursorSpeed by remember { mutableStateOf(CursorSpeed.entries[settings.cursorSpeed]) }
     var hapticEnabled by remember { mutableStateOf(settings.hapticEnabled) }
+    var aiThinkMs by remember { mutableStateOf(settings.aiThinkMs) }
 
-    // 4 个焦点单元：音效 / 落子振动 / 光标移动速度 / 返回主菜单
-    val unitCount = 4
+    // 5 个焦点单元：音效 / 落子振动 / 光标移动速度 / AI 最长思考时间 / 返回主菜单
+    val unitCount = 5
     val focusRequesters = remember { List(unitCount) { FocusRequester() } }
     var focusIndex by remember { mutableStateOf(0) }
 
@@ -108,13 +115,14 @@ fun SettingsScreen(
     ) {
         TvScaffold(
             title = "设置",
-            hint = "上下键换位置 · 左右键改选项",
+            hint = "上下键换位置 · 左右键改选项　|　AI 想清楚就落子，不会干等",
         ) {
             Row(modifier = Modifier.fillMaxSize()) {
                 // ---- 左列：三个可调项，**竖排** ----
                 Column(
                     modifier = Modifier.weight(1f).fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    // 6dp（原 10dp）：四行竖排的总高度只差几十像素，这里省下 24px 正好够
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     TvOptionRow(
                         title = "音效",
@@ -130,6 +138,7 @@ fun SettingsScreen(
                         },
                         focusRequester = focusRequesters[0],
                         inlineDescription = true,
+                        compact = true,
                     )
                     TvOptionRow(
                         title = "落子振动",
@@ -145,6 +154,7 @@ fun SettingsScreen(
                         },
                         focusRequester = focusRequesters[1],
                         inlineDescription = true,
+                        compact = true,
                     )
                     TvOptionRow(
                         title = "光标移动速度",
@@ -164,6 +174,32 @@ fun SettingsScreen(
                         },
                         focusRequester = focusRequesters[2],
                         inlineDescription = true,
+                        compact = true,
+                    )
+                    // 「最长」两个字必须写出来：这是**上限**不是固定耗时。
+                    // 我把它解释成"每次等 15 秒"时，连用户都反过来纠正了一次 ——
+                    // 界面文案少一个"最长"，语义就整个跑偏。
+                    TvOptionRow(
+                        // 标题带单位、"芯片只留数字"：左列实际可用宽度约 976px
+                        // （右列是 400dp = 800px），"AI 最长思考时间 + 4 个「15 秒」芯片"
+                        // 实测约 1018px，会把最后一个芯片挤成 0px。
+                        title = "AI 最长思考（秒）",
+                        options = SettingsStore.AI_THINK_OPTIONS,
+                        selectedIndex = SettingsStore.AI_THINK_OPTIONS
+                            .indexOfFirst { it == aiThinkMs }
+                            .coerceAtLeast(0),
+                        labelOf = { "${it / 1000}" },
+                        // 这里**不再放说明**：标题已写明"最长"，保险起见把"不会干等"
+                        // 挪到页面底部提示条（那里是免费空间），省下的这一行高度
+                        // 是四行挤进 1080p 的最后一点余量。
+                        descriptionOf = { null },
+                        onSelect = { index ->
+                            aiThinkMs = SettingsStore.AI_THINK_OPTIONS[index]
+                            settings.aiThinkMs = aiThinkMs
+                        },
+                        focusRequester = focusRequesters[3],
+                        inlineDescription = true,
+                        compact = true,
                     )
                 }
 
@@ -190,7 +226,7 @@ fun SettingsScreen(
                         label = "返回主菜单",
                         style = TvButtonStyle.PRIMARY,
                         onClick = onBack,
-                        focusRequester = focusRequesters[3],
+                        focusRequester = focusRequesters[4],
                         fillWidth = true,
                     )
                 }

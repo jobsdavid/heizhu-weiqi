@@ -33,6 +33,20 @@ class SettingsStore(context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_HAPTIC, value).apply()
 
     /**
+     * AI 每手**最长**思考时长（毫秒）。可选项见 [AI_THINK_OPTIONS]，默认最低档 15 秒。
+     *
+     * 为什么做成设置：这个值直接换取棋力（网络路径下每次前向都是一次真实的局面判断，
+     * 算得越多越准），但"愿意等多久"因人而异 —— 孩子在旁边等不了太久，
+     * 大人复盘时又希望它认真点。
+     *
+     * 注意它是**上限**而不是固定耗时：低难度档本来 0.3 秒就出手，有了上限也不会被迫变慢；
+     * 只有高难度档会真的把时间用满（用满的方式是加深前瞻，不是空转）。
+     */
+    var aiThinkMs: Long
+        get() = prefs.getLong(KEY_AI_THINK_MS, AI_THINK_OPTIONS.first())
+        set(value) = prefs.edit().putLong(KEY_AI_THINK_MS, value).apply()
+
+    /**
      * 上次对局用的三项设置（棋盘 / 难度 / 执色）。
      *
      * 记住它们是为了让「新对局」页**开箱就是上次那套** —— 孩子通常会连续好几局
@@ -57,6 +71,10 @@ class SettingsStore(context: Context) {
         set(value) = prefs.edit().putInt(KEY_PLAYER_COLOR, value).apply()
 
     companion object {
+        /** AI 思考时长可选项（毫秒）。默认取第一项 = 最低档。 */
+        val AI_THINK_OPTIONS = listOf(15_000L, 20_000L, 25_000L, 30_000L)
+
+        private const val KEY_AI_THINK_MS = "ai_think_ms"
         private const val KEY_SOUND = "sound_enabled"
         private const val KEY_CURSOR_SPEED = "cursor_speed"
         private const val KEY_HAPTIC = "haptic_enabled"

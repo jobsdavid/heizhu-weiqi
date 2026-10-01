@@ -50,6 +50,22 @@ enum class Difficulty(
     val localRadius: Int,
     /** 根节点战术辅助档位：2=强制能提就提，1=强介入，0=不干预。见类注释。 */
     val tacticAssist: Int,
+    /**
+     * 走「网络引导」路径时，根候选保留网络策略的前多少个点。
+     *
+     * 这是网络路径下**档位差异的主要旋钮**：候选越少越弱。
+     * 原来的随机 rollout 路径里"模拟次数"是旋钮，但实测它几乎不影响着法质量
+     * （300 次 vs 8000 次，丢目差 t=1.24，噪声内），所以档位必须换一个真正起作用的旋钮。
+     */
+    val netTopK: Int,
+    /**
+     * 网络路径的前瞻层数：1 = 只看"我这手之后对方视角的价值"；2 = 再算一步对方的最佳应手。
+     *
+     * 这是档位差异里**最可靠**的旋钮：实测同一批局面，一层前瞻平均丢 6.60 目、
+     * 两层 4.65 目 —— 差距确定且量级够大。相比之下"netTopK 候选数"并不单调
+     * （候选池小、噪声也小，反而躲过了价值网络的误差），所以低难度档改用层数+温度。
+     */
+    val netPlies: Int,
 ) {
     ENTRY(
         id = "entry",
@@ -61,6 +77,8 @@ enum class Difficulty(
         blunderRate = 0.25f,
         localRadius = 1,
         tacticAssist = 2,
+        netTopK = 6,
+        netPlies = 1,     // 入门：只看一层 + 高温度 → 最弱但不下废点
     ),
     BEGINNER(
         id = "beginner",
@@ -72,6 +90,8 @@ enum class Difficulty(
         blunderRate = 0.10f,
         localRadius = 2,
         tacticAssist = 2,
+        netTopK = 8,
+        netPlies = 1,     // 初级：一层 + 中温度
     ),
     INTERMEDIATE(
         id = "intermediate",
@@ -83,6 +103,8 @@ enum class Difficulty(
         blunderRate = 0.03f,
         localRadius = 0,
         tacticAssist = 2,
+        netTopK = 10,
+        netPlies = 2,     // 中级起改用两层前瞻
     ),
     ADVANCED(
         id = "advanced",
@@ -94,6 +116,8 @@ enum class Difficulty(
         blunderRate = 0.0f,
         localRadius = 0,
         tacticAssist = 2,
+        netTopK = 16,
+        netPlies = 2,
     ),
     MASTER(
         id = "master",
@@ -103,19 +127,24 @@ enum class Difficulty(
         // 明晃晃地说着 9 路 —— 真机上被黑猪大人当场抓到。
         // 需要区分尺寸的文案走 [descriptionFor]。
         description = "全力应战 · 不给机会",
-        // 上限 6 秒：黑猪大人明确表示"思考久一点不影响，6 秒能接受"。
+        // 上限 15 秒：黑猪大人明确表示"思考久一点不影响，15 秒能接受"。
         //
-        // ⚠️ 但要知道**现在这 6 秒买不到棋力**：实测（KataGo 当考官、同一批 9 路局面）
-        // 入门 300 次模拟 = 平均丢 7.32 目，高级 8000 次模拟 = 8.89 目（t=1.24，噪声内）。
-        // 模拟次数翻 27 倍都没有可测量的改进 —— 瓶颈是**评估函数太噪**（纯随机 rollout），
-        // 多搜只是在同一个错误判断上反复强化。
-        // 这一步是为「小网络」铺路：网络评估下搜索量与棋力正相关，那时 6 秒才真正变成棋力。
-        timeBudgetMs = 6_000,
+        // 这条预算的意义**取决于走哪条路径**，别混：
+        //   · 随机 rollout 路径（无网络）：多算等于白等。实测 300 次 vs 8000 次模拟，
+        //     平均丢目 7.32 → 8.89（t=1.24，噪声内）—— 评估函数太噪，多搜只是
+        //     在同一个错误判断上反复强化。
+        //   · 网络引导路径（有网络）：每一次前向都是一次真实的局面判断，算得越多越准。
+        //     端侧实测约 12~13 ms/次（32 通道×2 块），15 秒可跑 1000 次以上，
+        //     足以把网络放大数倍或做两层前瞻。
+        // 所以预算是给网络路径留的余量，这也是这条路线成立的前提之一。
+        timeBudgetMs = 15_000,
         maxPlayouts = 20_000,
         temperature = 0.0f,
         blunderRate = 0.0f,
         localRadius = 0,
         tacticAssist = 2,
+        netTopK = 24,     // 候选最全 → 最强
+        netPlies = 2,
     );
 
     /** 是否启用「只在棋子附近落子」的视野限制 */

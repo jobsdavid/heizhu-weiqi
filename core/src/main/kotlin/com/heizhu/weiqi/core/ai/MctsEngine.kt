@@ -43,6 +43,14 @@ import kotlin.random.Random
 class MctsEngine(
     private val size: Int,
     private val komi: Double = Komi.forSize(size),
+    /**
+     * 可选的小网络（由 KataGo 蒸馏而来）。
+     *
+     * 给定时走「网络引导」路径：用网络策略剪枝根候选、用网络价值做一手前瞻，
+     * 替掉随机 rollout 评估。**不传则行为与以前完全一致** —— 老路径的测试与
+     * 随机 rollout 的实现都保留，便于对照（也便于必要时回退）。
+     */
+    private val net: PolicyValueNet? = null,
 ) {
 
     private val cellCount = size * size
@@ -56,6 +64,9 @@ class MctsEngine(
     /** 复用的模拟棋盘，每个 playout 开头用 copyFrom 重置，避免反复分配 */
     private val simBoard = Board(size)
 
+    /** 网络路径第二层前瞻用的第二块棋盘（复用，避免每手分配） */
+    private val probeBoard = Board(size)
+
     /**
      * 单次 playout 的手数上限。
      *
@@ -66,6 +77,15 @@ class MctsEngine(
 
     /** 深层每个节点最多展开多少个子节点，防止树无限变宽 */
     private val maxChildrenPerNode = 16
+
+    /**
+     * 收工规则里「多少目才算还得继续下」的阈值（面积计分点）。
+     *
+     * 取值依据见 [anyMoveGainsOver] 的注释：填子/骚扰级（1~2 点）该收工，
+     * 一块棋的生死（10+ 点）不能收工。取 2 点，实测两个方向都能站住：
+     * 已定局面能正常收工，而"对方还有大块可杀/可救"时不会提前停手。
+     */
+    private val PASS_GAIN_THRESHOLD = 2
 
     /**
      * 上一次搜索的统计。用于**实测目标设备上的算力**——
@@ -94,6 +114,16 @@ class MctsEngine(
          * 生产路径不传这个参数，行为与以前完全一致。
          */
         playoutCap: Int? = null,
+        /**
+         * 每手**最长**思考时长（毫秒），null = 用难度自带的预算。对应 app 设置里的
+         * 「AI 最长思考（秒）」。
+         *
+         * ⚠️ **只作用于网络路径**。网络路径下算得越多越准，这个上限才有意义；
+         * 随机 rollout 路径上给 15~30 秒等于让孩子干等 —— 实测模拟次数翻 27 倍，
+         * 平均丢目 7.32 → 8.89（t=1.24，噪声内），换不来可测量的棋力。
+         * 所以那条路径继续用难度自带的短预算。
+         */
+        timeBudgetOverrideMs: Long? = null,
     ): Int {
         val startedAt = System.currentTimeMillis()
         val rootCandidates = generateRootCandidates(board, color, difficulty)
@@ -102,26 +132,45 @@ class MctsEngine(
             return PASS_MOVE
         }
 
-        // 收工规则（围棋的终局机制）：**对方已经停一手，而我这边的局面已经算得清、
-        // 且没有任何着法能提高我的地盘时，我也停一手。**
+        // 收工规则（围棋的终局机制）：**双方都无利可图时才停手**。
         //
-        // 不加这条，对局在实战里结束不了：引擎只要还有空点就一定会下，
-        // 于是「双方停一手 → 数子结算」永远走不到；孩子下腻了只能认输，
-        // 而认输是不数子的，结果页的比分形同虚设。
+        // 为什么需要这条：引擎只要还有空点就会一直下，于是「双方停一手 → 数子结算」
+        // 永远走不到，孩子下腻了只能认输，而认输是不数子的，结果页的比分形同虚设。
+        //
+        // 判据曾经是单边的：「我这手改善不了我的目差 → 停手」。实测这会让对局崩坏：
+        // 静态地盘估算（子数 + 围空）**看不见「防守能救活一大片棋」的价值** ——
+        // 白方一块棋将被杀时，算出来是「加一子 +1、自己的空 -1 = 净 0」，判定「没用」→ 停手；
+        // 而黑方能靠吃子实实在在得分 → 一直下。结果白方反复送停一手、黑方吃光全盘
+        // （实测同档对局终局黑方 39/81 子，KataGo 也判 +75.5 目）。
+        // 发到电视上，孩子看到的就是「对手一直在我家里填子」，完全不像围棋。
+        //
+        // 围棋的正确语义是：**双方一致认为终局**才停手（两人各自认为没有获利手段了）。
+        // 所以必须两边都无利可图。这么改也天然接上「双方停一手 → 数子结算」的终局机制。
         //
         // 两道闸门保证不提前收工：
         //   1. 空点 ≤ 40%：否则数子这个判据本身会退化 —— 空盘上「所有空点都算我的」，
         //      随手下一手也「不提高地盘」，会直接把开局误判成收工。
-        //   2. 只要还有任何一手能提高（子数 + 围空），就继续下 —— 比如还有单官要收。
-        //
-        // 注意：**不要求「对方刚停过手」**。
-        // 原来带了 `board.lastMove.isPass &&`，结果是：只要对手一直有子可下
-        // （哪怕是填自己的地），这一方就永远陪着下，对局永远结束不了 ——
-        // 真机上黑猪大人直接问「什么时候赢？有一方都没地方下子了还不判输赢吗？」。
-        // 围棋的正确行为就是「我没用的一手可下就停手」，对手停不停是他的事。
-        if (isSettledEnough(board) && !anyMoveImprovesScore(board, color, rootCandidates)) {
+        //   2. 任一方还有能提高（子数 + 围空）的一手，就都继续下。
+        if (isSettledEnough(board) &&
+            !anyMoveGainsOver(board, color, rootCandidates, PASS_GAIN_THRESHOLD) &&
+            !anyMoveGainsOver(
+                board, color.opponent,
+                generateRootCandidates(board, color.opponent, difficulty),
+                PASS_GAIN_THRESHOLD,
+            )
+        ) {
             lastStats = SearchStats(0, System.currentTimeMillis() - startedAt, rootCandidates.size)
             return PASS_MOVE
+        }
+
+        // 有网络就走网络引导路径。原因（实测）：随机 rollout 的评估噪声是棋力瓶颈 ——
+        // 同一档同一局面换个种子，丢目能从 0 摆到 21 目；而把模拟次数从 300 加到 8000，
+        // 丢目差 t=1.24（噪声内）。所以问题不在搜多少，而在"用什么评估局面"。
+        net?.let {
+            return findBestMoveWithNet(
+                board, color, difficulty, it, rng, startedAt,
+                budgetMs = timeBudgetOverrideMs ?: difficulty.timeBudgetMs,
+            )
         }
 
         val root = Node(move = PASS_MOVE, parent = null, toMove = color)
@@ -175,6 +224,155 @@ class MctsEngine(
             candidateCount = rootCandidates.size,
         )
         return selectFinalMove(root, difficulty, rng)
+    }
+
+    /**
+     * 网络引导的选点。
+     *
+     * 为什么不是「每次模拟都过一遍网络」：端侧算力有限（电视 CPU 一次前向几十毫秒），
+     * 那样在 6 秒预算里跑不了几次搜索。改成「策略剪枝 + 一手前瞻」：
+     *   · 根候选 = 网络策略前 K 个（K 由难度给，是网络路径下**真正起作用**的档位旋钮）
+     *   · 每个候选落子后，用网络评估「对方视角」的目差，取对我最优的
+     * 前向次数被控制在 K+1 次（电视上不到 1 秒），却用上了网络的判断力。
+     *
+     * 另掺入引擎启发式的头部候选兜底：网络是蒸馏来的，样本覆盖不到的局部战术形状
+     * 仍可能判错，而「能提就提」这类铁律不该被漏掉。
+     */
+    private fun findBestMoveWithNet(
+        board: Board,
+        color: Stone,
+        difficulty: Difficulty,
+        net: PolicyValueNet,
+        rng: Random,
+        startedAt: Long,
+        /** 本轮选点的**最长**时长（不是固定耗时：想清楚就提前收工）。 */
+        budgetMs: Long,
+    ): Int {
+        val deadline = startedAt + budgetMs
+        val rootEval = net.evaluate(board.cells, color.code)
+
+        val byPolicy = (0 until cellCount)
+            .filter { board.cells[it].toInt() == 0 && rootEval.policy[it] > 0f }
+            .sortedByDescending { rootEval.policy[it] }
+            .take(difficulty.netTopK)
+
+        val candidates = ArrayList<Int>(byPolicy.size + NET_HEURISTIC_TAIL)
+        candidates.addAll(byPolicy)
+        var tail = 0
+        for (m in generateRootCandidates(board, color, difficulty)) {
+            if (tail >= NET_HEURISTIC_TAIL) break
+            if (!candidates.contains(m)) {
+                candidates.add(m)
+                tail++
+            }
+        }
+        if (candidates.isEmpty()) {
+            lastStats = SearchStats(0, System.currentTimeMillis() - startedAt, 0)
+            return PASS_MOVE
+        }
+
+        // 先算出每个候选的价值，最后统一挑选 —— 因为挑选方式取决于难度温度，
+        // 不能在循环里"见到更高的就替换"（那样温度就没用了）
+        val scored = ArrayList<Pair<Int, Float>>(candidates.size)
+        // ⚠️ 初始着法不能直接取 candidates[0]：网络给的候选只按"空点"筛过，
+        // **没有滤掉劫禁着点/自杀点**（MCTS 路径用的是合法性校验过的候选，不会有这问题）。
+        // 若这一手恰好非法、且后面所有候选都因非法被跳过，就会返回一个非法着法 ——
+        // 实测被对局评测台抓到（"illegal move 3,4 for WHITE"）。所以初始值留空、
+        // 只用**实际落子成功过**的候选，一个都没有就停一手。
+        var bestMove = PASS_MOVE
+        var bestValue = -Float.MAX_VALUE
+        var evaluated = 0
+        val oppColor = color.opponent
+        for (mv in candidates) {
+            // 到时就收工，用已有最优 —— 这是"最长时长"的语义：
+            // 不是每次都要等满，而是复杂局面才有机会多用。
+            if (System.currentTimeMillis() >= deadline) break
+            simBoard.copyFrom(board)
+            if (!applyMove(simBoard, mv, color)) continue
+
+            // ---- 第二层：对方会怎么应？----
+            // 网络给的是**对方视角**的目差；只有一层前瞻时无法知道对方的最佳应手，
+            // 很多"看着不错"的手其实是送的。这里对对方的最佳应手做最小化（minimax）。
+            val oppEval = net.evaluate(simBoard.cells, oppColor.code)
+            evaluated++
+            // 低难度档只用一层前瞻（netPlies = 1）：这是档位之间最可靠的强弱旋钮
+            val oppCands = if (difficulty.netPlies < 2) {
+                emptyList()
+            } else {
+                (0 until cellCount)
+                    .filter { simBoard.cells[it].toInt() == 0 && oppEval.policy[it] > 0f }
+                    .sortedByDescending { oppEval.policy[it] }
+                    .take(REPLY_CANDIDATES)
+            }
+
+            var worstForMe = Float.MAX_VALUE
+            var sawReply = false
+            for (om in oppCands) {
+                if (System.currentTimeMillis() >= deadline) break
+                probeBoard.copyFrom(simBoard)
+                if (!applyMove(probeBoard, om, oppColor)) continue
+                // 对方应完又轮到我，此时网络给的正是**我方视角**的目差
+                val back = net.evaluate(probeBoard.cells, color.code)
+                evaluated++
+                sawReply = true
+                if (back.scoreLead < worstForMe) worstForMe = back.scoreLead
+            }
+            // 对方无从应手（例如被我提光）时退回"我这手的即时价值"
+            val myValue = if (sawReply) worstForMe else -oppEval.scoreLead
+            scored.add(mv to myValue)
+            if (myValue > bestValue) {
+                bestValue = myValue
+                bestMove = mv
+            }
+        }
+
+        // 一个合法候选都没有 → 停一手（宁可停手也不能下非法手）
+        if (scored.isEmpty()) {
+            lastStats = SearchStats(0, System.currentTimeMillis() - startedAt, candidates.size)
+            return PASS_MOVE
+        }
+        if (bestMove == PASS_MOVE) bestMove = scored[0].first
+
+        // ---- 按难度温度挑选：低难度档更随机 → 更弱；大师档温度 0 → 取最优 ----
+        if (difficulty.temperature > 0f && scored.size > 1) {
+            var sum = 0.0
+            val weights = DoubleArray(scored.size)
+            for (i in scored.indices) {
+                weights[i] = kotlin.math.exp(
+                    ((scored[i].second - bestValue) / (difficulty.temperature * VALUE_TEMP_SCALE)).toDouble(),
+                )
+                sum += weights[i]
+            }
+            if (sum > 0.0) {
+                var pick = rng.nextDouble() * sum
+                for (i in weights.indices) {
+                    pick -= weights[i]
+                    if (pick <= 0.0) {
+                        bestMove = scored[i].first
+                        break
+                    }
+                }
+            }
+        }
+
+        // 低难度档保留「会犯错」的手感：按概率挑一个次优候选。
+        // ⚠️ 必须从 **scored**（已经实际落子成功过的候选）里挑，不能从 candidates 挑 ——
+        // candidates 只按空点筛过，含劫禁点/自杀点；从这里挑等于按概率下非法手。
+        // 实测被对局评测台抓到（"illegal move 3,4 for WHITE"）；app 里因为上层会拒绝
+        // 并改判停一手，所以一直没暴露，但那是"每四手送一个停一手"的隐性缺陷。
+        if (difficulty.blunderRate > 0f && scored.size > 1 &&
+            rng.nextFloat() < difficulty.blunderRate
+        ) {
+            val pool = scored.filter { it.first != bestMove }
+            if (pool.isNotEmpty()) bestMove = pool[rng.nextInt(pool.size)].first
+        }
+
+        lastStats = SearchStats(
+            playouts = evaluated,
+            elapsedMs = System.currentTimeMillis() - startedAt,
+            candidateCount = candidates.size,
+        )
+        return bestMove
     }
 
     /**
@@ -322,12 +520,24 @@ class MctsEngine(
     }
 
     /**
-     * 是否存在某个候选着法能提高 [color] 的「子数 + 围空」。
+     * 是否存在某个候选着法能让 [color] 的「子数 + 围空」**增长超过 [threshold]**。
      *
      * 这是收工规则的第二道闸门。只在根候选上跑一次：19 路最多 361 个候选，
      * 每个做一次落子 + 一次数子，量级在十万次基本操作，单手多花几毫秒。
+     *
+     * **为什么必须带阈值、而不能是「任何增长」**：静态地盘估算分不清「真得利」和
+     * 「无意义的填子」—— 对手往我的空里填一子，按面积计分它自己也 +1，于是
+     * 「任何增长」这个判据下**双方永远都有得利手段、对局永不结束**（用户当初报的
+     * 「什么时候赢」就是这个问题）；而反过来只看自己、不看对手，又会让落后方
+     * 早早停手、赢家吃光全盘。两边的病根是同一个：缺一个「多少才算得利」的分界。
+     * 实测取 2 点：填子/骚扰级（1~2 点）算收工，一块棋的生死（10+ 点）就不能收工。
      */
-    private fun anyMoveImprovesScore(board: Board, color: Stone, candidates: IntArray): Boolean {
+    private fun anyMoveGainsOver(
+        board: Board,
+        color: Stone,
+        candidates: IntArray,
+        threshold: Int,
+    ): Boolean {
         val isBlack = color == Stone.BLACK
         val scored0 = scorer.score(board.cells, komi)
         val before = if (isBlack) scored0.blackTotal else scored0.whiteTotal
@@ -337,7 +547,7 @@ class MctsEngine(
             if (simBoard.play(c % size, c / size, color) !is PlayOutcome.Ok) continue
             val scored = scorer.score(simBoard.cells, komi)
             val after = if (isBlack) scored.blackTotal else scored.whiteTotal
-            if (after > before) return true
+            if (after > before + threshold) return true
         }
         return false
     }
@@ -619,6 +829,38 @@ class MctsEngine(
     companion object {
         /** 表示停一手（pass）的着法值 */
         const val PASS_MOVE = -1
+
+        /** 网络路径下额外掺入的启发式候选个数（兜底，见 findBestMoveWithNet 注释） */
+        private const val NET_HEURISTIC_TAIL = 4
+
+        /**
+         * 第二层前瞻里，给「对方应手」保留的候选个数。
+         *
+         * **取 2，不是越多越好** —— 这是实测出来的（同一批 8 个局面、同一网络）：
+         *
+         *   | 应手数 | 聚合 | 平均丢目 | 最差单手 |
+         *   |---|---|---|---|
+         *   | 0（只看一层） | — | 6.60 | 20.84 |
+         *   | **2** | 取最差 | **4.65** | **14.13** |
+         *   | 6 | 取最差 | 4.88 | 17.16 |
+         *   | 4 | 取平均 | 5.72 | 25.67 |
+         *
+         * 为什么不是越多越好：对 N 个**含噪**价值取最小值，最小值会系统性偏低 ——
+         * N 越大偏得越狠，好手被误判成坏手（现象就是"漏掉要点 + 尾部爆炸"）。
+         * 为什么不用平均：平均等价于假设对方乱下，会忽略对方最狠的一手（实测最差 25.67）。
+         * 围棋里必须用最小值，但应手池要小到噪声可控。
+         */
+        private const val REPLY_CANDIDATES = 2
+
+        /**
+         * 把"目"换算成温度采样尺度的分母：权重 = exp((价值 − 最高价值) / (温度 × 本值))。
+         *
+         * 为什么需要它：难度里的 temperature 原本是按"MCTS 访问量分布"设计的，
+         * 而网络路径的价值单位是**目**（动辄差十几目），直接 exp(-目差/温度) 会瞬间退化成
+         * 取最优 —— 低难度档就永远不会变弱。按实测的目差量级取 4 目一档比较合适：
+         * 温度 1.0 时，落后 4 目的候选权重约为最优的 1/e。
+         */
+        private const val VALUE_TEMP_SCALE = 4.0f
 
         /** UCB 探索常数，√2 是经典取值 */
         private const val EXPLORATION_CONSTANT = 1.41421356

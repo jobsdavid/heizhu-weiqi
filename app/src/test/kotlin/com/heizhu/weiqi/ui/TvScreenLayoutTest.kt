@@ -350,7 +350,14 @@ class TvScreenLayoutTest {
         pressOnFocused(Key.DirectionDown)
         assertFocusedRowIs("光标移动速度")
         pressOnFocused(Key.DirectionDown)
+        // 新增「AI 最长思考（秒）」后，返回按钮前面的可聚焦单元多了一个 ——
+        // 按键序列必须跟着改，否则这条测试测的就不再是"能不能走到返回按钮"。
+        assertFocusedRowIs("AI 最长思考（秒）")
+        pressOnFocused(Key.DirectionDown)
         assertFocusedRowIs("返回主菜单")
+        pressOnFocused(Key.DirectionUp)
+        // 从返回按钮往上走一格，现在落在新加的 AI 行（原来这一格是光标移动速度）
+        assertFocusedRowIs("AI 最长思考（秒）")
         pressOnFocused(Key.DirectionUp)
         assertFocusedRowIs("光标移动速度")
     }
@@ -373,12 +380,15 @@ class TvScreenLayoutTest {
     private fun assertFocusedRowIs(title: String) {
         val f = focusedRowBounds() ?: error("没有任何节点获得焦点")
         val t = rule.onNodeWithText(title).fetchSemanticsNode().boundsInRoot
-        val xOverlap = f.left < t.right && f.right > t.left
-        // 容差 100px：行间距约 200px，容差再大就会把「焦点没动」判成通过
-        val yNear = kotlin.math.abs(f.top - t.top) < 100f
+        // 判据：焦点盒与标题**纵向重叠**。
+        // 原来是「x 重叠 + y 邻近」，因为芯片在标题下方、同宽。设置页改成 compact 后
+        // 芯片排到标题同一行右侧，x 不再重叠 —— 判据失效，但它要守的性质（焦点能到这一行）
+        // 依然该守。纵向重叠在紧凑布局下依然真实：行距约 157px，芯片高约 84px，
+        // 所以"焦点没动"（差一整行）必然不重叠，仍然抓得住。
+        val yOverlap = f.bottom > t.top && f.top < t.bottom
         assertTrue(
-            "期望焦点在「$title」那一行：标题 $t，焦点盒 $f（x 重叠=$xOverlap y 邻近=$yNear）",
-            xOverlap && yNear,
+            "期望焦点在「$title」那一行：标题 $t，焦点盒 $f（纵向重叠=$yOverlap）",
+            yOverlap,
         )
     }
 
@@ -451,6 +461,49 @@ class TvScreenLayoutTest {
     /** 取「包含某段文字」的节点包围盒，没有则报错。 */
     private fun boxOf(text: String): Rect =
         rule.onNodeWithText(text).fetchSemanticsNode().boundsInRoot
+
+    @Test
+    fun `对局页-面板状态必须绑到正确的一方`() {
+        // sampleUi 里 **playerColor = 白**（人类执白，见该函数第 196 行）——
+        // 所以 toMove = WHITE 是人类的回合，toMove = BLACK 是 AI 的回合。
+        // （我第一版把这里当成"人类执黑"，断言整个反向，白跑两轮。）
+        var ui by mutableStateOf(sampleUi(9).copy(toMove = Stone.WHITE, thinking = false))
+        render {
+            GameScreen(
+                ui = ui,
+                cursorSpeed = CursorSpeed.NORMAL,
+                onMoveCursor = { _, _ -> },
+                onJumpToRecentMove = {},
+                onConfirm = {},
+                onUndo = {},
+                onPass = {},
+                onResign = {},
+                onHint = {},
+                onExit = {},
+                onConsumeToast = {},
+                onClearHint = {},
+            )
+        }
+        rule.waitForIdle()
+
+        // ① 人类该走：左侧（人类）面板显示执黑 + 该你了；不得出现 AI 侧的任何状态。
+        // 方位用**相对比较**，不写死像素 —— boundsInRoot 是像素（1920×1080），
+        // 拿 dp 去比会得到假失败（我第一版就写错了单位）。
+        assertTrue("人类执白时「执白」必须在左栏（人类面板）",
+            boxOf("执白").left < boxOf("执黑").left)
+        rule.onNodeWithText("轮到黑猪大人").assertExists()
+        rule.onNodeWithText("该你了").assertExists()
+        rule.onNodeWithText("轮到黑猪勇士").assertDoesNotExist()
+        rule.onNodeWithText("思考中…").assertDoesNotExist()
+
+        // ② AI 该走且正在思考：右侧面板显示思考中；界面上不该再出现「该你了」
+        ui = sampleUi(9).copy(toMove = Stone.BLACK, thinking = true)
+        rule.waitForIdle()
+        rule.onNodeWithText("思考中…").assertExists()
+        rule.onNodeWithText("正在想…").assertExists()
+        rule.onNodeWithText("该你了").assertDoesNotExist()
+        rule.onNodeWithText("轮到黑猪大人").assertDoesNotExist()
+    }
 
     /**
      * 两侧面板的纵向位置**必须与提示文字、回合状态无关**。

@@ -2,6 +2,8 @@ package com.heizhu.weiqi.bench
 
 import com.heizhu.weiqi.core.ai.Difficulty
 import com.heizhu.weiqi.core.ai.MctsEngine
+import com.heizhu.weiqi.core.ai.PolicyValueNet
+import java.io.File
 import com.heizhu.weiqi.core.rules.Board
 import com.heizhu.weiqi.core.rules.PlayOutcome
 import com.heizhu.weiqi.core.rules.Stone
@@ -41,6 +43,8 @@ fun main() {
                 "quit" -> return
                 "genmove" -> out.println(genmove(t))
                 "selfplay" -> out.println(selfplay(t))
+                "netbench" -> out.println(netBench(t))
+                "score" -> out.println(scoreGame(t))
                 else -> out.println("err unknown-command ${t[0]}")
             }
         } catch (e: Exception) {
@@ -79,6 +83,23 @@ private fun parseBoard(size: Int, movesSpec: String): Board {
  * "entry"，于是五次「不同难度」其实全跑了 BEGINNER，得出「难度旋钮失效」的假结论，
  * 而且任何地方都不会报错。
  */
+/**
+ * 可选的蒸馏网络。用环境变量 WEIQI_NET 指向 `.bin`（同目录同名 `.json` 是 manifest）。
+ *
+ * 设了它，评测跑的就是「网络引导」路径；不设则跑原来的随机 rollout 路径 ——
+ * 这样同一套评测台能把两条路径放在同一批局面上对照，这是验收的核心手段。
+ */
+private fun loadNet(): PolicyValueNet? {
+    val path = System.getenv("WEIQI_NET") ?: return null
+    val bin = File(path)
+    val manifest = File(path.removeSuffix(".bin") + ".json")
+    check(bin.isFile) { "WEIQI_NET 指向的文件不存在：$path" }
+    check(manifest.isFile) { "缺少 manifest：${manifest.path}" }
+    val net = PolicyValueNet.load(manifest.readText(), bin.readBytes())
+    System.err.println("已加载网络 $path（${bin.length() / 1024} KB）")
+    return net
+}
+
 private fun difficultyOf(raw: String): Difficulty {
     val id = raw.lowercase()
     return Difficulty.entries.firstOrNull { it.id == id }
@@ -96,6 +117,49 @@ private fun tvPlayoutCap(difficulty: Difficulty): Int? {
     return (difficulty.timeBudgetMs * rate / 1000.0).toInt().coerceAtLeast(1)
 }
 
+/**
+ * 量网络前向耗时：`netbench <size> <iters>`。
+ *
+ * 为什么单独量：整条路线的端侧可行性**只取决于这个数字** ——
+ * 电视上一次前向若 60ms，6 秒预算只够 100 次，路线就得重设计。
+ * 单独量出来才能早决定，而不是等全部做完才发现跑不动。
+ */
+private fun netBench(t: List<String>): String {
+    val size = t[1].toInt()
+    val iters = t.getOrNull(2)?.toIntOrNull() ?: 50
+    val net = loadNet() ?: return "err 没有设置 WEIQI_NET"
+    val cells = ByteArray(size * size)
+    // 造一个有几颗子的局面，避免空盘特例
+    cells[size * size / 2] = 1
+    cells[size * size / 2 + 1] = 2
+    // 预热（首次调用要初始化 JIT/缓存，不预热会把首帧算进去）
+    repeat(3) { net.evaluate(cells, 1) }
+    val t0 = System.nanoTime()
+    repeat(iters) { net.evaluate(cells, 1) }
+    val ms = (System.nanoTime() - t0) / 1_000_000.0 / iters
+    return "size=$size iters=$iters 前向 %.3f ms/次".format(ms)
+}
+
+/**
+ * 终局数子：`score <size> <moves...>` → `黑方净胜子数 winner=B|W`。
+ *
+ * 为什么评测台需要它：对局裁判原本只用 KataGo 分析终局，但 KataGo 会**拒绝**某些
+ * 棋谱 —— 我的引擎用简单劫，KataGo 默认带超级劫，劫争反复时它认为非法。
+ * 于是整局成绩算不出来。用本引擎自己的数子器兜底，至少能把对局判出来。
+ *
+ * ⚠️ 局限：本数子器不判死子（见 core 的 Scorer 注释）。收官阶段盘面若有未提的死子，
+ * 会判偏。所以**优先用 KataGo 当裁判**，只在它拒绝时才退回这里。
+ */
+private fun scoreGame(t: List<String>): String {
+    val size = t[1].toInt()
+    val board = parseBoard(size, if (t.size > 2) t.drop(2).joinToString(" ") else "-")
+    val score = com.heizhu.weiqi.core.rules.Scorer(size)
+        .score(board.cells, com.heizhu.weiqi.core.rules.Komi.forSize(size))
+    val margin = score.blackMargin
+    val blackWins = margin > 2 * score.komi
+    return "blackMargin=$margin komi=${score.komi} winner=${if (blackWins) "B" else "W"}"
+}
+
 private fun genmove(t: List<String>): String {
     val size = t[1].toInt()
     val color = if (t[2].uppercase().startsWith("B")) Stone.BLACK else Stone.WHITE
@@ -107,7 +171,8 @@ private fun genmove(t: List<String>): String {
     val spec = if (t.size > 5) t.drop(5).joinToString(" ") else "-"
     val board = parseBoard(size, spec)
     val cap = tvPlayoutCap(diff)
-    val move = runBlocking { MctsEngine(size).findBestMove(board, color, diff, Random(seed), cap) }
+    val engine = MctsEngine(size, net = loadNet())
+    val move = runBlocking { engine.findBestMove(board, color, diff, Random(seed), cap) }
     return if (move < 0) "pass" else "${move % size},${move / size}"
 }
 
@@ -116,7 +181,7 @@ private fun selfplay(t: List<String>): String {
     val diff = difficultyOf(t[2])
     val plies = t[3].toInt()
     val seed = t.getOrNull(4)?.toLongOrNull() ?: 1L
-    val engine = MctsEngine(size)
+    val engine = MctsEngine(size, net = loadNet())
     val board = Board(size)
     var color = Stone.BLACK
     val moves = ArrayList<String>(plies)

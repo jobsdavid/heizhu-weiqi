@@ -1,0 +1,175 @@
+{
+ "size": 9,
+ "input_planes": 3,
+ "layers": [
+  {
+   "name": "stem.w",
+   "shape": [
+    32,
+    3,
+    3,
+    3
+   ],
+   "offset": 0
+  },
+  {
+   "name": "stem.b",
+   "shape": [
+    32
+   ],
+   "offset": 864
+  },
+  {
+   "name": "block0.c1.w",
+   "shape": [
+    32,
+    32,
+    3,
+    3
+   ],
+   "offset": 896
+  },
+  {
+   "name": "block0.c1.b",
+   "shape": [
+    32
+   ],
+   "offset": 10112
+  },
+  {
+   "name": "block0.c2.w",
+   "shape": [
+    32,
+    32,
+    3,
+    3
+   ],
+   "offset": 10144
+  },
+  {
+   "name": "block0.c2.b",
+   "shape": [
+    32
+   ],
+   "offset": 19360
+  },
+  {
+   "name": "block1.c1.w",
+   "shape": [
+    32,
+    32,
+    3,
+    3
+   ],
+   "offset": 19392
+  },
+  {
+   "name": "block1.c1.b",
+   "shape": [
+    32
+   ],
+   "offset": 28608
+  },
+  {
+   "name": "block1.c2.w",
+   "shape": [
+    32,
+    32,
+    3,
+    3
+   ],
+   "offset": 28640
+  },
+  {
+   "name": "block1.c2.b",
+   "shape": [
+    32
+   ],
+   "offset": 37856
+  },
+  {
+   "name": "pconv.w",
+   "shape": [
+    16,
+    32,
+    1,
+    1
+   ],
+   "offset": 37888
+  },
+  {
+   "name": "pconv.b",
+   "shape": [
+    16
+   ],
+   "offset": 38400
+  },
+  {
+   "name": "pout.w",
+   "shape": [
+    1,
+    16,
+    1,
+    1
+   ],
+   "offset": 38416
+  },
+  {
+   "name": "pout.b",
+   "shape": [
+    1
+   ],
+   "offset": 38432
+  },
+  {
+   "name": "vconv.w",
+   "shape": [
+    8,
+    32,
+    1,
+    1
+   ],
+   "offset": 38433
+  },
+  {
+   "name": "vconv.b",
+   "shape": [
+    8
+   ],
+   "offset": 38689
+  },
+  {
+   "name": "vfc1.w",
+   "shape": [
+    64,
+    648
+   ],
+   "offset": 38697
+  },
+  {
+   "name": "vfc1.b",
+   "shape": [
+    64
+   ],
+   "offset": 80169
+  },
+  {
+   "name": "vfc2.w",
+   "shape": [
+    1,
+    64
+   ],
+   "offset": 80233
+  },
+  {
+   "name": "vfc2.b",
+   "shape": [
+    1
+   ],
+   "offset": 80297
+  }
+ ],
+ "bytes": 321192,
+ "value_scale": 10.0,
+ "k_winrate": 0.2188383011226025
+}

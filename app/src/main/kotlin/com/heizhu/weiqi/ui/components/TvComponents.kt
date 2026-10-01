@@ -530,6 +530,83 @@ fun TvButton(
  * **改这里的任何 padding 都必须重跑 `gradle :app:testDebugUnitTest`** ——
  * 本机 UI 测试会逐页量每个文字节点的高度，6 秒就能告诉你有没有压扁。
  */
+/**
+ * 选项芯片行（左右键改值）。
+ *
+ * 从 [TvOptionRow] 里抽出来，是为了让 compact 形态能把它排到标题**同一行**右侧 ——
+ * 复制一份标记会导致两边样式漂移，而样式（焦点描边、选中底色）恰恰是这个组件最要紧的部分。
+ */
+@Composable
+private fun <T> OptionChips(
+    options: List<T>,
+    selectedIndex: Int,
+    labelOf: (T) -> String,
+    accent: Color,
+    focused: Boolean,
+    focusRequester: FocusRequester?,
+    onSelect: (Int) -> Unit,
+    onFocus: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(RadiusChip))
+            .background(if (focused) SurfaceFocused.copy(alpha = 0.55f) else Surface.copy(alpha = 0.7f))
+            .border(
+                if (focused) 3.dp else 1.dp,
+                if (focused) FocusRing else SurfaceBorder,
+                RoundedCornerShape(RadiusChip),
+            )
+            .tvFocusable(focusRequester = focusRequester) { onFocus(it) }
+            .onKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                when (event.key) {
+                    Key.DirectionLeft -> {
+                        if (selectedIndex > 0) onSelect(selectedIndex - 1)
+                        true
+                    }
+                    Key.DirectionRight -> {
+                        if (selectedIndex < options.size - 1) onSelect(selectedIndex + 1)
+                        true
+                    }
+                    else -> false
+                }
+            }
+            // 纵向 3dp（原 5dp）：设置页要竖排四行，compact 形态下每行省 4~8px
+            // 足以决定"塞得下"还是"最后一行被压成 0px"。改这里必须重跑本机布局测试。
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        options.forEachIndexed { index, option ->
+            val isSelected = index == selectedIndex
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(RadiusChip - 4.dp))
+                    .background(
+                        if (isSelected) {
+                            if (focused) accent else accent.copy(alpha = 0.22f)
+                        } else {
+                            SurfaceAlt.copy(alpha = 0.75f)
+                        },
+                    )
+                    .padding(horizontal = 10.dp, vertical = 2.dp),
+            ) {
+                Text(
+                    text = labelOf(option),
+                    color = when {
+                        isSelected && focused -> Background
+                        isSelected -> TextPrimary
+                        else -> TextDim
+                    },
+                    fontSize = 23.sp,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 fun <T> TvOptionRow(
     title: String,
@@ -549,8 +626,20 @@ fun <T> TvOptionRow(
      * —— 信息一条没少，只是换了个位置。
      */
     inlineDescription: Boolean = false,
+    /**
+     * 紧凑形态：把选项芯片排到标题**同一行**右侧，省掉标题那一整行的高度。
+     *
+     * 用途：一页要竖排**四行**时（如设置页）。实测四行按原形态必然溢出 1080p 的
+     * 可用高度（约 770px），而 compact 每行约 170px，四行 ≈ 740px 正好落进预算。
+     * 宽度上够用：标题 + 说明 + 芯片合起来约 950px，左列可用约 1400px。
+     */
+    compact: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
+    // 紧凑形态下说明文字**不内联**：标题 + 芯片同处一行已经把宽度吃紧，
+    // 再加 20 字的说明会把最后几个芯片挤成 0px（实测：光标速度的「中/快」与
+    // AI 思考时长的四个芯片全部被压没）。移到下一行反而仍比原形态省一半高度。
+    val descOnTitleLine = inlineDescription && !compact
 
     Column(modifier = modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -573,7 +662,7 @@ fun <T> TvOptionRow(
                         .background(accent),
                 )
             }
-            if (inlineDescription) {
+            if (descOnTitleLine) {
                 val inlineDesc = descriptionOf(options[selectedIndex])
                 if (inlineDesc != null) {
                     Spacer(Modifier.width(16.dp))
@@ -587,67 +676,38 @@ fun <T> TvOptionRow(
                     )
                 }
             }
-        }
-        Spacer(Modifier.height(6.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(RadiusChip))
-                .background(if (focused) SurfaceFocused.copy(alpha = 0.55f) else Surface.copy(alpha = 0.7f))
-                .border(
-                    if (focused) 3.dp else 1.dp,
-                    if (focused) FocusRing else SurfaceBorder,
-                    RoundedCornerShape(RadiusChip),
+            if (compact) {
+                // 芯片靠右排在标题同一行 —— 省掉标题那一整行的高度
+                Spacer(Modifier.weight(1f))
+                Spacer(Modifier.width(16.dp))
+                OptionChips(
+                    options = options,
+                    selectedIndex = selectedIndex,
+                    labelOf = labelOf,
+                    accent = accent,
+                    focused = focused,
+                    focusRequester = focusRequester,
+                    onSelect = onSelect,
+                    onFocus = { focused = it },
                 )
-                .tvFocusable(focusRequester = focusRequester) { focused = it }
-                .onKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
-                    when (event.key) {
-                        Key.DirectionLeft -> {
-                            if (selectedIndex > 0) onSelect(selectedIndex - 1)
-                            true
-                        }
-                        Key.DirectionRight -> {
-                            if (selectedIndex < options.size - 1) onSelect(selectedIndex + 1)
-                            true
-                        }
-                        else -> false
-                    }
-                }
-                .padding(horizontal = 8.dp, vertical = 5.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            options.forEachIndexed { index, option ->
-                val isSelected = index == selectedIndex
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(RadiusChip - 4.dp))
-                        .background(
-                            if (isSelected) {
-                                if (focused) accent else accent.copy(alpha = 0.22f)
-                            } else {
-                                SurfaceAlt.copy(alpha = 0.75f)
-                            },
-                        )
-                        .padding(horizontal = 14.dp, vertical = 5.dp),
-                ) {
-                    Text(
-                        text = labelOf(option),
-                        // 焦点在这一行时，选中项用深色字压在亮底上，对比度拉满
-                        color = when {
-                            isSelected && focused -> Background
-                            isSelected -> TextPrimary
-                            else -> TextDim
-                        },
-                        fontSize = 23.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                    )
-                }
             }
         }
+        if (!compact) {
+            Spacer(Modifier.height(6.dp))
+            OptionChips(
+                options = options,
+                selectedIndex = selectedIndex,
+                labelOf = labelOf,
+                accent = accent,
+                focused = focused,
+                focusRequester = focusRequester,
+                onSelect = onSelect,
+                onFocus = { focused = it },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         val desc = descriptionOf(options[selectedIndex])
-        if (desc != null && !inlineDescription) {
+        if (desc != null && !descOnTitleLine) {
             Spacer(Modifier.height(3.dp))
             Text(
                 text = desc,

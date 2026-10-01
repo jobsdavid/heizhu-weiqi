@@ -25,6 +25,12 @@ dependencies {
     // MCTS 引擎的 suspend 取消支持
     implementation(libs.kotlinx.coroutines.core)
 
+    // 读导出的网络权重 manifest。
+    // ⚠️ 只应用 serialization **插件**是不够的：插件提供编译器支持，
+    // 运行时的 @Serializable/Json 来自这个库。缺了它是编译报
+    // "Unresolved reference 'serialization'"，不是运行时错误。
+    implementation(libs.kotlinx.serialization.json)
+
     testImplementation(libs.junit)
 }
 

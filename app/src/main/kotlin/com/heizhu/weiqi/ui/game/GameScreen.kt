@@ -393,15 +393,21 @@ fun GameScreen(
                     Text(text = "总用时 $totalText", color = TextDim, fontSize = 19.sp)
                 }
                 Spacer(Modifier.weight(1f))
+                // ⚠️ 绑定的语义，别再弄反了（这一处曾经整体错位，用户会直接看到
+                //    "自己执黑却显示执白、自己的思考时间显示在对手面板上"）：
+                //     · `ui.playerColor` / `playerCaptured` / `playerThinkLive` = **人类（黑猪大人）**
+                //       —— 证据：提示功能用 `state.playerColor` 搜索，提示文案是
+                //       "黑猪大人觉得这里可以停一手"（GameViewModel 第 363/371 行）。
+                //     · `aiColor` / `aiCaptured` / `bossThinkLive` = **AI（黑猪勇士）**。
                 PlayerPanel(
                     name = "黑猪大人",
                     avatarRes = R.drawable.avatar_boss,
                     ringColor = AccentWarm,
-                    stoneIsBlack = aiIsBlack,
-                    captured = aiCaptured,
-                    thinkMs = bossThinkLive,
-                    isTurn = !ui.isOver && ui.toMove == aiColor,
-                    statusText = if (ui.thinking) "思考中…" else null,
+                    stoneIsBlack = ui.playerColor == Stone.BLACK,
+                    captured = playerCaptured,
+                    thinkMs = playerThinkLive,
+                    isTurn = !ui.isOver && ui.toMove == ui.playerColor,
+                    statusText = if (!ui.isOver && ui.toMove == ui.playerColor) "该你了" else null,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.weight(1f))
@@ -456,11 +462,12 @@ fun GameScreen(
                     name = "黑猪勇士",
                     avatarRes = R.drawable.avatar_warrior,
                     ringColor = Accent,
-                    stoneIsBlack = ui.playerColor == Stone.BLACK,
-                    captured = playerCaptured,
-                    thinkMs = playerThinkLive,
-                    isTurn = !ui.isOver && ui.toMove == ui.playerColor,
-                    statusText = if (!ui.isOver && ui.toMove == ui.playerColor) "该你了" else null,
+                    stoneIsBlack = aiIsBlack,
+                    captured = aiCaptured,
+                    thinkMs = bossThinkLive,
+                    isTurn = !ui.isOver && ui.toMove == aiColor,
+                    // AI 那一侧不能写「该你了」——那是跟机器说话。它在想就说在想。
+                    statusText = if (ui.thinking) "思考中…" else null,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.weight(1f))
@@ -525,14 +532,16 @@ private fun TurnIndicator(ui: GameUi) {
         // （减去棋子圆点 24dp + 间距 8dp 后只剩约 7 字宽）会折成两行，
         // 整列高度一变，上面的左侧面板就被推着跳（实测 79px）。
         ui.thinking -> "正在想…"
-        ui.toMove == ui.playerColor -> "轮到黑猪勇士"
-        else -> "轮到黑猪大人"
+        // ⚠️ `ui.playerColor` = **人类（黑猪大人）**，`aiColor` = AI（黑猪勇士）。
+        // 这里曾经整条反过来：人类该走时显示"轮到黑猪勇士"，用户在自己面板上看到的是对手的信息。
+        ui.toMove == ui.playerColor -> "轮到黑猪大人"
+        else -> "轮到黑猪勇士"
     }
     val color = when {
         ui.isOver -> TextSecondary
         ui.thinking -> Warning
-        ui.toMove == ui.playerColor -> Accent
-        else -> AccentWarm
+        ui.toMove == ui.playerColor -> AccentWarm
+        else -> Accent
     }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Row(verticalAlignment = Alignment.CenterVertically) {

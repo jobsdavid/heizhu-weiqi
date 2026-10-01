@@ -17,6 +17,7 @@ import com.heizhu.weiqi.core.rules.Stone
 import com.heizhu.weiqi.data.CursorSpeed
 import com.heizhu.weiqi.data.GameRecord
 import com.heizhu.weiqi.data.RecordStore
+import com.heizhu.weiqi.data.NetAssets
 import com.heizhu.weiqi.data.SettingsStore
 import com.heizhu.weiqi.data.encodeMoves
 import kotlinx.coroutines.Dispatchers
@@ -164,7 +165,11 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
             playerColor = playerColor,
         )
         game = state
-        engine = MctsEngine(boardSize)
+        // 有蒸馏网络就用「网络引导」路径（9 路），没有就回退随机 rollout。
+        // 回退是刻意的：网络文件缺失/解析失败都不能影响 app 可用性。
+        // **按难度档取网**：阶梯是靠网络强弱实现的（弱网 = 入门，最强网 = 大师），
+        // 传难度 id 才能拿到对应的那一个。
+        engine = MctsEngine(boardSize, net = NetAssets.load(getApplication(), boardSize, difficulty.id))
         // 记住这一局用的三项设置，下次进「新对局」直接带出来（见 SettingsStore 注释）
         settings.lastBoardSize = boardSize
         settings.lastDifficultyId = difficulty.id
@@ -355,7 +360,8 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
         hintJob = viewModelScope.launch {
             _ui.value = _ui.value.copy(thinking = true)
             val move = withContext(Dispatchers.Default) {
-                engineRef.findBestMove(state.board, state.playerColor, state.difficulty, searchRandom)
+                engineRef.findBestMove(state.board, state.playerColor, state.difficulty, searchRandom,
+                        timeBudgetOverrideMs = settings.aiThinkMs)
             }
             if (move >= 0) {
                 val x = move % state.size
@@ -385,7 +391,8 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
             _ui.value = _ui.value.copy(thinking = true)
             try {
                 val move = withContext(Dispatchers.Default) {
-                    engineRef.findBestMove(state.board, state.aiColor, state.difficulty, searchRandom)
+                    engineRef.findBestMove(state.board, state.aiColor, state.difficulty, searchRandom,
+                        timeBudgetOverrideMs = settings.aiThinkMs)
                 }
                 logSearchStats(engineRef, state)
                 val aiPassed = move < 0
