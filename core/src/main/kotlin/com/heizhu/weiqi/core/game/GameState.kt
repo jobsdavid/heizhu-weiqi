@@ -147,21 +147,33 @@ class GameState(
         if (isOver) return MoveOutcome.GameAlreadyOver
         if (color != toMove) return MoveOutcome.NotYourTurn
 
+        // ⚠️ 快照必须在 board.play() **之前**取。
+        //
+        // 悔棋恢复的就是这份「落子前」的局面。这里曾经把 pushSnapshot 放在落子之后，
+        // 结果快照里已经含了刚落的子，悔棋时「恢复成功」但棋盘纹丝不动 ——
+        // 手数减了、子还在，是最难从现象反推的一类 bug。
+        pushSnapshot()
+
         val outcome = board.play(x, y, color)
-        return when (outcome) {
-            is PlayOutcome.Ok -> {
-                commitMove(
-                    index = y * size + x,
-                    color = color,
-                    capturedCount = outcome.captureCount,
-                )
-                MoveOutcome.Ok(outcome.captureCount)
+        if (outcome !is PlayOutcome.Ok) {
+            // 落子被拒（已有子 / 自杀 / 打劫 / 越界）→ 丢弃这份快照，保持栈的干净
+            history.removeAt(history.size - 1)
+            // outcome 已在上面排除了 Ok，余下四个分支对 sealed interface 是穷尽的
+            return when (outcome) {
+                PlayOutcome.Occupied -> MoveOutcome.Occupied
+                PlayOutcome.Suicide -> MoveOutcome.Suicide
+                PlayOutcome.Ko -> MoveOutcome.Ko
+                PlayOutcome.OutOfBounds -> MoveOutcome.OutOfBounds
+                is PlayOutcome.Ok -> MoveOutcome.OutOfBounds    // 不可达，仅为穷尽性
             }
-            PlayOutcome.Occupied -> MoveOutcome.Occupied
-            PlayOutcome.Suicide -> MoveOutcome.Suicide
-            PlayOutcome.Ko -> MoveOutcome.Ko
-            PlayOutcome.OutOfBounds -> MoveOutcome.OutOfBounds
         }
+
+        commitMove(
+            index = y * size + x,
+            color = color,
+            capturedCount = outcome.captureCount,
+        )
+        return MoveOutcome.Ok(outcome.captureCount)
     }
 
     /** 当前轮到的一方按扁平索引落子。AI 走这条路径。 */
@@ -188,9 +200,8 @@ class GameState(
         return MoveOutcome.Ok(0)
     }
 
+    /** 落子成功后的登记。快照已由调用方在落子前取好。 */
     private fun commitMove(index: Int, color: Stone, capturedCount: Int) {
-        // 快照必须在落子**之前**取，否则悔棋回不到原局面
-        pushSnapshot()
         _moves.add(Move(index = index, color = color, capturedCount = capturedCount))
         consecutivePasses = 0
         toMove = toMove.opponent
