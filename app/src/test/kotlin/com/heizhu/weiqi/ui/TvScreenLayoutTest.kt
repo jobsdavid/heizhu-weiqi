@@ -28,6 +28,9 @@ import com.heizhu.weiqi.ui.result.ResultScreen
 import com.heizhu.weiqi.ui.settings.SettingsScreen
 import com.heizhu.weiqi.ui.theme.WeiqiTvTheme
 import com.heizhu.weiqi.vm.GameUi
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -440,6 +443,77 @@ class TvScreenLayoutTest {
      * 第一版是「返回键直接悔棋」，理由是孩子下错棋的挫败感是劝退主因；
      * 但真机上误碰返回键会让刚下的一手莫名消失，那比下错棋更崩溃。
      */
+    /** 取「包含某段文字」的节点包围盒，没有则报错。 */
+    private fun boxOf(text: String): Rect =
+        rule.onNodeWithText(text).fetchSemanticsNode().boundsInRoot
+
+    /**
+     * 两侧面板的纵向位置**必须与提示文字、回合状态无关**。
+     *
+     * 用户实测：提示变成「这里已经有子了」时，右下角提示区高度变了，黑猪勇士头像往下掉。
+     * 量下来是两类独立原因，两侧都有：
+     *   · 右栏 HintBox 的高度随提示文字行数变 → 两个 weight(1f) 间距重新分配 → 面板位移
+     *   · PlayerPanel 的「该你了／思考中…」胶囊**有则出现无则消失** → 面板自身高度变
+     *
+     * 判据用面板标题（「黑猪大人」/「黑猪勇士」）的 y 坐标 —— 它是面板内容的第一行文字，
+     * 面板一动它必动。这样测的是**结果**（面板有没有跳），而不是某个具体实现细节。
+     */
+    @Test
+    fun `对局页-面板位置不得随提示与回合状态变化`() {
+        val states = listOf(
+            "轮黑猪大人（左有胶囊）" to sampleUi(9),
+            "轮黑猪勇士（右有胶囊）" to sampleUi(9).copy(toMove = Stone.WHITE),
+            "黑猪大人思考中" to sampleUi(9).copy(thinking = true),
+            "提示：非法落子" to sampleUi(9).copy(previewIllegal = "这里已经有子了", previewCapture = 0),
+            "提示：无处可下" to sampleUi(9).copy(playerHasNoLegalMove = true),
+            "提示：可提子" to sampleUi(9).copy(previewCapture = 4),
+        )
+        data class M(val boss: Float, val warrior: Float, val hintH: Float, val hintTop: Float)
+        val measured = LinkedHashMap<String, M>()
+
+        // ⚠️ rule.setContent 一个测例只能调一次（再调会抛 "has already set content"），
+        // 所以用状态变量驱动，而不是循环里反复 setContent。第一版就是那么写的，直接报错。
+        var ui by mutableStateOf(states.first().second)
+        rule.setContent {
+            WeiqiTvTheme {
+                GameScreen(ui, CursorSpeed.NORMAL, { _, _ -> }, {}, {}, {}, {}, {}, {}, {}, {}, {})
+            }
+        }
+        rule.waitForIdle()
+
+        for ((label, state) in states) {
+            ui = state
+            rule.waitForIdle()
+            // 提示框 = 那几条提示文案所在的文字节点（按前缀认，不写死完整句子）
+            val hintPrefixes = listOf(
+                "对局结束", "你没地方下了", "黑猪大人正在思考", "这里已经有子了",
+                "落在光标处", "OK 落子",
+            )
+            val hb = textNodes().firstOrNull { (t, _) -> hintPrefixes.any { p -> t.contains(p) } }?.second
+            measured[label] = M(
+                boxOf("黑猪大人").top,
+                boxOf("黑猪勇士").top,
+                hb?.height ?: -1f,
+                hb?.top ?: -1f,
+            )
+            rule.waitForIdle()
+        }
+
+        println("  === 各状态下两侧面板标题 y / 提示框高度 ===")
+        measured.forEach { (k, v) ->
+            println("    %-22s 黑猪大人 y=%7.1f  黑猪勇士 y=%7.1f  提示框 h=%6.1f top=%7.1f"
+                .format(k, v.boss, v.warrior, v.hintH, v.hintTop))
+        }
+        val boss = measured.values.map { it.boss }
+        val warrior = measured.values.map { it.warrior }
+        val spreadB = boss.max() - boss.min()
+        val spreadW = warrior.max() - warrior.min()
+        println("    → 位移幅度：左侧 %.1f px，右侧 %.1f px".format(spreadB, spreadW))
+
+        assertEquals("左侧面板位置随状态漂移 %.1f px".format(spreadB), 0f, spreadB, 0.5f)
+        assertEquals("右侧面板位置随状态漂移 %.1f px".format(spreadW), 0f, spreadW, 0.5f)
+    }
+
     @Test
     fun `对局页-返回键要先确认才悔棋`() {
         var undone = 0

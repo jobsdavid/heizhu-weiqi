@@ -44,6 +44,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
@@ -78,6 +79,25 @@ private enum class Dir(val dx: Int, val dy: Int) {
     UP(0, -1), DOWN(0, 1), LEFT(-1, 0), RIGHT(1, 0)
 }
 
+// ============================================================
+// 两侧栏里凡是**内容会变**的块，高度都必须固定（状态胶囊、提示区、回合文字）。
+// 面板是由两个 weight(1f) 间距居中的，任一兄弟块高度一变，面板就整块上下跳 ——
+// 这类缺陷在真机上表现为「头像莫名往下掉」，极难从现象反推，所以把尺寸钉死并配测试。
+// ============================================================
+
+/**
+ * 状态胶囊槽位高度（40dp）。推导：胶囊 = 垂直内边距 5dp×2 + 20sp 中文行高（约 28sp）≈ 38~40dp。
+ * 实测胶囊出现/消失让面板高度变化 100px（=50dp，含 10dp 间距），面板居中 → 上下各跳 50px。
+ */
+private val StatusPillHeight = 40.dp
+
+/**
+ * 提示区槽位高度（108dp）。推导：最长提示在 176dp 侧栏里折两行（19sp 中文约 9 字/行，
+ * 实测两行 112px）+ 间距 5dp(10px) + 坐标行 18sp(约 56px) + 上下内边距 9dp×2(36px)
+ * ≈ 214px = 107dp，取 108dp。提示框在槽内底部对齐，超出只会向上吃空白，**不会挤到面板**。
+ */
+private val HintSlotHeight = 108.dp
+
 /**
  * 对局界面。
  *
@@ -97,6 +117,10 @@ private enum class Dir(val dx: Int, val dy: Int) {
  * 加速度曲线，而且首发延迟在不同电视上不一致。
  *
  * 视觉上「棋盘是唯一的主角」：两侧面板刻意压低对比度，焦点全交给棋盘。
+ *
+ * 两侧栏里凡是**内容会变**的块，高度都必须固定（状态胶囊、提示区、回合文字）。
+ * 原因见下方常量注释：面板是由两个 weight(1f) 间距居中的，任一兄弟块的高度一变，
+ * 面板就会上下跳。这类缺陷在真机上表现为「头像莫名往下掉」，极难从现象反推。
  */
 @Composable
 fun GameScreen(
@@ -363,7 +387,16 @@ fun GameScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.weight(1f))
-                HintBox(ui)
+                // 提示区高度**必须固定**。它一变，上面两个 weight(1f) 间距就重新分配，
+                // 面板整块上下跳 —— 用户实测：提示变成「这里已经有子了」（比默认提示少一行）
+                // 时，黑猪勇士头像往下掉 28px。
+                // 槽位底部对齐 → 提示框照旧贴着屏幕底部，只在槽内向上长。
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(HintSlotHeight),
+                    contentAlignment = Alignment.BottomCenter,
+                ) {
+                    HintBox(ui)
+                }
             }
         }
 
@@ -411,7 +444,10 @@ fun GameScreen(
 private fun TurnIndicator(ui: GameUi) {
     val text = when {
         ui.isOver -> "对局结束"
-        ui.thinking -> "黑猪大人正在想…"
+        // 必须短到一行放得下：「黑猪大人正在想…」有 8 字，在 176dp 侧栏里
+        // （减去棋子圆点 24dp + 间距 8dp 后只剩约 7 字宽）会折成两行，
+        // 整列高度一变，上面的左侧面板就被推着跳（实测 79px）。
+        ui.thinking -> "正在想…"
         ui.toMove == ui.playerColor -> "轮到黑猪勇士"
         else -> "轮到黑猪大人"
     }
@@ -427,8 +463,16 @@ private fun TurnIndicator(ui: GameUi) {
                 StoneDot(isBlack = ui.toMove == Stone.BLACK, size = 24.dp)
                 Spacer(Modifier.width(8.dp))
             }
-            // 20sp 是这条侧栏能容纳的最大字号：再大「黑猪大人正在想…」就会折行
-            Text(text = text, color = color, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            // maxLines=1 是**布局稳定性**的兜底，不只是排版：这行一旦折行，
+            // 整列高度就变，上面的面板跟着跳（实测 79px）。宁可省略号，不要折行。
+            Text(
+                text = text,
+                color = color,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
         Spacer(Modifier.height(6.dp))
         Text(
@@ -512,21 +556,30 @@ private fun PlayerPanel(
                 fontWeight = FontWeight.Black,
             )
         }
-        // 状态胶囊只在需要时出现（该你了 / 思考中），两侧面板高度差不影响观感
-        if (statusText != null) {
-            Spacer(Modifier.height(10.dp))
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(ringColor.copy(alpha = 0.22f))
-                    .padding(horizontal = 14.dp, vertical = 5.dp),
-            ) {
-                Text(
-                    text = statusText,
-                    color = ringColor,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                )
+        // 状态胶囊（该你了 / 思考中…）的位置**必须恒定**：有则显示、无则留空。
+        //
+        // 原来的写法是「没状态就不渲染这一块」，于是面板自身高度随回合变化，
+        // 而面板被两个 weight(1f) 间距居中 → 整块面板上下跳（实测 50px）。
+        // 这一条是被用户抓出来的：提示文字变化时头像会往下掉。
+        Spacer(Modifier.height(10.dp))
+        Box(
+            modifier = Modifier.height(StatusPillHeight),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (statusText != null) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(ringColor.copy(alpha = 0.22f))
+                        .padding(horizontal = 14.dp, vertical = 5.dp),
+                ) {
+                    Text(
+                        text = statusText,
+                        color = ringColor,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
             }
         }
     }
@@ -539,7 +592,9 @@ private fun HintBox(ui: GameUi) {
         ui.isOver -> "对局结束"
         // 无处可下时给出**明确的收工指引**：不加这条，孩子会一直找不到落子点，
         // 又不知道可以停一手，对局就永远结束不了
-        ui.playerHasNoLegalMove -> "你没地方下了 · 按菜单键 → 「停一手」收工数子"
+        // 用显式换行而不是让它自动折：自动折的行数随字号/字体/屏宽变化，
+        // 提示区高度就不固定了。这里定死两行，正好落在 HintSlotHeight 里。
+        ui.playerHasNoLegalMove -> "你没地方下了\n菜单键 → 停一手"
         ui.thinking -> "黑猪大人正在思考…"
         ui.previewIllegal != null -> ui.previewIllegal
         ui.previewCapture > 0 -> "落在光标处可以吃掉对方 ${ui.previewCapture} 子"
