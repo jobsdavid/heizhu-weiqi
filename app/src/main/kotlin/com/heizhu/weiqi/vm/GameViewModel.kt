@@ -3,6 +3,8 @@ package com.heizhu.weiqi.vm
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.heizhu.weiqi.audio.SoundPlayer
+import com.heizhu.weiqi.audio.SoundPlayer.Sfx
 import com.heizhu.weiqi.core.ai.Difficulty
 import com.heizhu.weiqi.core.ai.MctsEngine
 import com.heizhu.weiqi.core.game.EndReason
@@ -76,6 +78,12 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
 
     private val recordStore = RecordStore(File(app.filesDir, "records.json"))
     val settings = SettingsStore(app)
+
+    /**
+     * 音效播放器。开关状态实时读 [settings]，所以在设置页关掉立刻生效，
+     * 不需要重启应用或重新开局。
+     */
+    private val soundPlayer = SoundPlayer(app) { settings.soundEnabled }
 
     private val _screen = MutableStateFlow(Screen.HOME)
     val screen: StateFlow<Screen> = _screen.asStateFlow()
@@ -206,17 +214,24 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
-        when (state.play(current.cursorX, current.cursorY, state.playerColor)) {
+        when (val outcome = state.play(current.cursorX, current.cursorY, state.playerColor)) {
             is com.heizhu.weiqi.core.game.MoveOutcome.Ok -> {
+                playMoveSound(outcome.capturedCount, isPlayer = true)
                 refreshFromGame()
                 launchAiIfNeeded()
             }
-            com.heizhu.weiqi.core.game.MoveOutcome.Occupied ->
+            com.heizhu.weiqi.core.game.MoveOutcome.Occupied -> {
+                soundPlayer.play(Sfx.ILLEGAL)
                 _ui.value = current.copy(toast = "这里已经有子了")
-            com.heizhu.weiqi.core.game.MoveOutcome.Suicide ->
+            }
+            com.heizhu.weiqi.core.game.MoveOutcome.Suicide -> {
+                soundPlayer.play(Sfx.ILLEGAL)
                 _ui.value = current.copy(toast = "这里落下就没有气了")
-            com.heizhu.weiqi.core.game.MoveOutcome.Ko ->
+            }
+            com.heizhu.weiqi.core.game.MoveOutcome.Ko -> {
+                soundPlayer.play(Sfx.ILLEGAL)
                 _ui.value = current.copy(toast = "打劫：不能马上提回来")
+            }
             else -> Unit
         }
     }
@@ -266,15 +281,18 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
         cancelThinking()
 
         if (state.undoRemaining <= 0) {
+            soundPlayer.play(Sfx.ILLEGAL)
             _ui.value = _ui.value.copy(toast = "本局悔棋次数已用完（每局 5 次）")
             return
         }
 
         if (!state.undo()) {
+            soundPlayer.play(Sfx.ILLEGAL)
             _ui.value = _ui.value.copy(toast = "还没有可以撤销的棋")
             return
         }
 
+        soundPlayer.play(Sfx.UNDO)
         refreshFromGame()
         _ui.value = _ui.value.copy(
             toast = "已撤销 · 还剩 ${state.undoRemaining} 次",
@@ -329,7 +347,10 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
                 val move = withContext(Dispatchers.Default) {
                     engineRef.findBestMove(state.board, state.aiColor, state.difficulty, searchRandom)
                 }
-                state.play(move, state.aiColor)
+                val aiOutcome = state.play(move, state.aiColor)
+                if (aiOutcome is com.heizhu.weiqi.core.game.MoveOutcome.Ok) {
+                    playMoveSound(aiOutcome.capturedCount, isPlayer = false)
+                }
                 refreshFromGame()
                 if (state.isOver) onGameFinished()
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -380,6 +401,11 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
     private fun onGameFinished() {
         val state = game ?: return
         val result = state.result ?: return
+        when (result.playerWon) {
+            true -> soundPlayer.play(Sfx.WIN)
+            false -> soundPlayer.play(Sfx.LOSE)
+            null -> Unit          // 和棋不播，避免误导
+        }
         _screen.value = Screen.RESULT
         viewModelScope.launch {
             val record = buildRecord(state, result)
@@ -417,6 +443,22 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
     // 其他
     // ===============================================================
 
+    /**
+     * 播放落子音效。
+     *
+     * 提子时会在落子声之上叠一层「哗」——叠音比替换成单一音效更能传达
+     *「这一手同时发生了两件事」。对手的音量压到 0.7，孩子能从听感上分辨敌我。
+     */
+    private fun playMoveSound(capturedCount: Int, isPlayer: Boolean) {
+        soundPlayer.play(
+            if (isPlayer) Sfx.STONE_PLACE else Sfx.STONE_AI,
+            if (isPlayer) 1f else 0.7f,
+        )
+        if (capturedCount > 0) {
+            soundPlayer.play(Sfx.CAPTURE, 0.9f)
+        }
+    }
+
     fun consumeToast() {
         if (_ui.value.toast != null) _ui.value = _ui.value.copy(toast = null)
     }
@@ -431,6 +473,7 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         super.onCleared()
         cancelThinking()
+        soundPlayer.release()
     }
 
     companion object {
