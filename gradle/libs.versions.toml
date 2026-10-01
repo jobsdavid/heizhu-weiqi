@@ -1,0 +1,53 @@
+# ============================================================
+# 版本目录 —— 围棋练习 TV
+# 所有依赖版本集中管理，构建文件不写死版本号
+# ============================================================
+[versions]
+agp = "9.4.1"
+kotlin = "2.4.20"
+
+# AndroidX
+coreKtx = "1.19.1"
+activityCompose = "1.13.0"
+lifecycle = "2.11.0"
+
+# Compose
+composeBom = "2026.09.00"
+tvMaterial = "1.1.0"
+
+# Kotlin 生态
+coroutines = "1.11.0"
+serializationJson = "1.11.0"
+
+# 测试
+junit = "4.13.2"
+
+[libraries]
+# --- AndroidX 基础 ---
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }
+
+# --- Compose（版本由 BOM 统一约束，此处不写 version）---
+compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+compose-ui = { group = "androidx.compose.ui", name = "ui" }
+compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+compose-foundation = { group = "androidx.compose.foundation", name = "foundation" }
+
+# --- Compose for TV（大屏专用，自带 D-pad 焦点处理）---
+androidx-tv-material = { group = "androidx.tv", name = "tv-material", version.ref = "tvMaterial" }
+
+# --- Kotlin 生态 ---
+kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serializationJson" }
+
+# --- 测试 ---
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

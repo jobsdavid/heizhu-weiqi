@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  电视应用主题。
+  用 android:Theme.Material.NoActionBar 而非 AppCompat —— Compose 界面不需要
+  AppCompat，少一个依赖就少一份构建风险与包体积。
+-->
+<resources>
+    <style name="Theme.WeiqiTV" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/background</item>
+        <item name="android:colorBackground">@color/background</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+</resources>

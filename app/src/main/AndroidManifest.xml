@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ============================================================
+     围棋练习 TV — 应用清单
+     目标设备：小米电视 S Pro Mini LED 2026（澎湃OS 3 / Android TV 形态）
+     ============================================================ -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- TV 应用必须声明不依赖触摸屏，否则不被识别为 TV 应用 -->
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false" />
+
+    <!-- 声明本应用为 Leanback(TV) 应用 -->
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="true" />
+
+    <!-- 纯本地单机应用，不申请任何网络权限（战绩仅存本机） -->
+
+    <application
+        android:allowBackup="true"
+        android:banner="@drawable/banner"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="false"
+        android:theme="@style/Theme.WeiqiTV">
+
+        <!-- 唯一的 Activity：全局单 Activity + Compose 内部导航 -->
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden|navigation"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <!-- 电视启动器入口 -->
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
+</manifest>

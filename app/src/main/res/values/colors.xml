@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 深蓝黑而非纯黑：夜间观看不刺眼，也让木色棋盘更跳出来 -->
+    <color name="background">#14171C</color>
+    <color name="ic_launcher_background">#C49868</color>
+</resources>

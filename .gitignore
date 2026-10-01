@@ -1,0 +1,16 @@
+# 构建产物
+build/
+.gradle/
+.kotlin/
+captures/
+
+# 本机路径配置（含绝对路径，不可共享）
+local.properties
+
+# IDE
+.idea/
+*.iml
+*.hprof
+
+# 系统
+.DS_Store
