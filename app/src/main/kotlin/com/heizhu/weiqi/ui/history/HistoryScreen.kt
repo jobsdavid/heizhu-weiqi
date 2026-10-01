@@ -1,5 +1,6 @@
 package com.heizhu.weiqi.ui.history
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
@@ -91,6 +92,9 @@ fun HistoryScreen(
 
     val pageFocus = remember { FocusRequester() }
     RequestFocusOnEnter(pageFocus)
+
+    // 返回键回主菜单
+    BackHandler { onBack() }
 
     TvScaffold(
         title = "历史战绩",

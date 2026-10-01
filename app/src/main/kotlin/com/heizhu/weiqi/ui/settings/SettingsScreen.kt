@@ -1,5 +1,6 @@
 package com.heizhu.weiqi.ui.settings
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -48,6 +49,9 @@ fun SettingsScreen(
     var hapticEnabled by remember { mutableStateOf(settings.hapticEnabled) }
     val backFocus = remember { FocusRequester() }
     RequestFocusOnEnter(backFocus)
+
+    // 返回键回主菜单，而不是退出应用
+    BackHandler { onBack() }
 
     TvScaffold(
         title = "设置",

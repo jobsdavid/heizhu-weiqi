@@ -43,7 +43,9 @@ fun AppRoot(vm: GameViewModel) {
 
             Screen.SETUP -> NewGameScreen(
                 initialSize = vm.settings.lastBoardSize,
-                initialDifficulty = Difficulty.BEGINNER,
+                // 默认「入门」而不是「初级」：孩子第一次上手要能赢，
+                // 建立信心比「有挑战」重要得多
+                initialDifficulty = Difficulty.ENTRY,
                 initialColor = Stone.BLACK,
                 onStart = { size, difficulty, color ->
                     vm.startNewGame(size, difficulty, color)

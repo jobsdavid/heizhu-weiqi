@@ -1,5 +1,6 @@
 package com.heizhu.weiqi.ui.result
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -57,6 +58,9 @@ fun ResultScreen(
 ) {
     val rematchFocus = remember { FocusRequester() }
     RequestFocusOnEnter(rematchFocus)
+
+    // 返回键回主菜单（结果已入库存档，不会丢）
+    BackHandler { onHome() }
 
     val score = result.score
     val headline = when (result.playerWon) {

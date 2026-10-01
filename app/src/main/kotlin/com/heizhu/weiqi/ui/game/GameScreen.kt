@@ -1,5 +1,6 @@
 package com.heizhu.weiqi.ui.game
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
@@ -220,6 +221,11 @@ fun GameScreen(
         }
     }
 
+    // 兜底：正常情况下返回键由上面的 onPreviewKeyEvent 拦下来当悔棋用。
+    // 但如果焦点因为某种原因丢失（例如被系统弹窗抢走），onPreviewKeyEvent 收不到事件，
+    // 返回键就会冒泡到系统把整个应用关掉。这里兜一层，保证返回键始终是「悔棋」。
+    BackHandler { onUndo() }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -233,7 +239,9 @@ fun GameScreen(
             Spacer(Modifier.height(12.dp))
             Row(
                 modifier = Modifier.fillMaxWidth().weight(1f),
-                verticalAlignment = Alignment.CenterVertically,
+                // 面板靠上对齐而不是垂直居中：左下角要腾出空间放放大镜，
+                // 第一版居中时放大镜直接压住了「黑棋」面板，把「黑猪勇士」标签遮掉一半。
+                verticalAlignment = Alignment.Top,
             ) {
                 PlayerPanel(
                     title = "黑棋",
@@ -276,9 +284,19 @@ fun GameScreen(
             BottomBar(ui)
         }
 
-        // 放大镜：常驻左下角，显示光标周围 5x5，解决「棋子太小看不清」
-        if (!ui.isOver) {
-            Magnifier(ui, modifier = Modifier.align(Alignment.BottomStart).padding(24.dp))
+        // 放大镜：显示光标周围 5x5 区域。
+        //
+        // 只在 13 路 / 19 路出现 —— 9 路棋盘在 1080p 下格距接近 100px、棋子直径 90px 开外，
+        // 2 米外也看得清清楚楚，叠个放大镜纯属白占地方；而 9 路正是孩子的主战场。
+        //
+        // 底部留 72dp 是为了不越出棋盘区、压住底部提示栏。
+        if (!ui.isOver && ui.boardSize >= 13) {
+            Magnifier(
+                ui,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 20.dp, bottom = 72.dp),
+            )
         }
 
         if (ui.thinking) {
@@ -436,7 +454,7 @@ private fun Magnifier(ui: GameUi, modifier: Modifier = Modifier) {
             previewColor = ui.playerColor,
             hintX = if (ui.hintX < 0) -1 else ui.hintX,
             hintY = if (ui.hintY < 0) -1 else ui.hintY,
-            modifier = Modifier.size(190.dp),
+            modifier = Modifier.size(130.dp),
         )
     }
 }
@@ -484,10 +502,12 @@ private fun PauseMenu(
     ) {
         Column(
             modifier = Modifier
+                // 固定宽度：第一版没限宽，菜单按钮 fillMaxWidth 直接把面板撑到满屏、左右贴边
+                .width(520.dp)
                 .clip(RoundedCornerShape(18.dp))
                 .background(Surface)
                 .border(1.dp, SurfaceBorder, RoundedCornerShape(18.dp))
-                .padding(28.dp),
+                .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(text = "暂停", color = TextPrimary, fontWeight = FontWeight.Bold)

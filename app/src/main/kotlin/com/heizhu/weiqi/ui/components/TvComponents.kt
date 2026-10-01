@@ -142,6 +142,7 @@ fun <T> TvOptionRow(
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
     showFocusHint: Boolean = true,
+    focusRequester: FocusRequester? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
 
@@ -150,7 +151,7 @@ fun <T> TvOptionRow(
             text = title,
             color = if (focused) Accent else TextSecondary,
         )
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -161,6 +162,7 @@ fun <T> TvOptionRow(
                     if (focused) CursorRing else SurfaceBorder.copy(alpha = 0.5f),
                     RoundedCornerShape(12.dp),
                 )
+                .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
                 .focusable()
                 .onFocusChanged { focused = it.isFocused }
                 .onKeyEvent { event ->
