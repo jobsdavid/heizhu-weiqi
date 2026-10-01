@@ -38,23 +38,29 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import com.heizhu.weiqi.core.ai.Difficulty
 import com.heizhu.weiqi.data.GameRecord
 import com.heizhu.weiqi.data.StatsCalculator
-import com.heizhu.weiqi.data.WinStats
 import com.heizhu.weiqi.ui.components.RequestFocusOnEnter
+import com.heizhu.weiqi.ui.components.SectionCard
+import com.heizhu.weiqi.ui.components.StatTile
+import com.heizhu.weiqi.ui.components.StoneDot
+import com.heizhu.weiqi.ui.components.Tag
 import com.heizhu.weiqi.ui.components.TvButton
+import com.heizhu.weiqi.ui.components.TvButtonStyle
 import com.heizhu.weiqi.ui.components.TvScaffold
 import com.heizhu.weiqi.ui.theme.Accent
-import com.heizhu.weiqi.ui.theme.Danger
+import com.heizhu.weiqi.ui.theme.AccentWarm
+import com.heizhu.weiqi.ui.theme.Background
+import com.heizhu.weiqi.ui.theme.FocusRing
 import com.heizhu.weiqi.ui.theme.Surface
+import com.heizhu.weiqi.ui.theme.SurfaceAlt
 import com.heizhu.weiqi.ui.theme.SurfaceBorder
-import com.heizhu.weiqi.ui.theme.SurfaceFocused
 import com.heizhu.weiqi.ui.theme.TextDim
 import com.heizhu.weiqi.ui.theme.TextPrimary
 import com.heizhu.weiqi.ui.theme.TextSecondary
-import com.heizhu.weiqi.ui.theme.Warning
 import kotlinx.coroutines.launch
 
 /**
@@ -65,6 +71,9 @@ import kotlinx.coroutines.launch
  *
  * 下半部分是逐局列表，最近的在最上面。**列表用上下方向键滚动**：
  * 列表项本身不承载焦点，避免焦点在几十个条目间跳来跳去、还得一路按过去。
+ *
+ * ## 布局预算（1080p）
+ * 左栏三块统计 + 按钮 = 354dp，可用内容高度 ≈ 366dp，留有余量。
  */
 @Composable
 fun HistoryScreen(
@@ -98,75 +107,123 @@ fun HistoryScreen(
 
     TvScaffold(
         title = "历史战绩",
-        subtitle = if (records.isEmpty()) "还没有下过棋" else "共 ${records.size} 局，最近的排在最前面",
-        hint = "上下键滚动 · 返回键回主菜单",
+        hint = if (records.isEmpty()) "还没有下过棋 · 返回键回主菜单"
+        else "共 ${records.size} 局 · 上下键滚动 · 返回键回主菜单",
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .focusRequester(pageFocus)
-                .focusable()
-                .onKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
-                    when (event.key) {
-                        Key.DirectionUp -> {
-                            scope.launch { listState.scrollBy(-120f) }
-                            true
-                        }
-                        Key.DirectionDown -> {
-                            scope.launch { listState.scrollBy(120f) }
-                            true
-                        }
-                        else -> false
-                    }
-                },
-        ) {
-            Row(modifier = Modifier.fillMaxSize()) {
-                // ---- 左：分组统计 ----
-                Column(
-                    modifier = Modifier.width(400.dp).fillMaxHeight(),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
+        Row(modifier = Modifier.fillMaxSize()) {
+            // ---- 左：统计侧栏 ----
+            Column(
+                modifier = Modifier.width(520.dp).fillMaxHeight(),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                // 总览刻意不套标题、内边距减半：这张卡只是四个数字，
+                // 而下面两张分组卡的行数**会随记录变多而增长**（最多 5 档难度 + 3 种棋盘），
+                // 高度必须优先留给它们 —— 否则记录一多，分组卡就会像以前那样被压扁。
+                // 总览刻意做成**一行紧凑的「标签 数值」**，不用四块大数字砖。
+                //
+                // 原因：下面两张分组卡的行数是**数据决定的**（按难度最多 5 档、按棋盘最多 3 种），
+                // 高度必须留给它们。本机 UI 自测实测：用四块砖时，「按难度」第 5 行
+                // （大师）会被压成 **0px** —— 整行直接消失，孩子看不到自己在大师档的战绩。
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Surface.copy(alpha = 0.92f))
+                        .border(2.dp, SurfaceBorder, RoundedCornerShape(18.dp))
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    StatsCard("总览", listOf(
-                        "总对局" to "${overall.total}",
-                        "胜 / 负 / 和" to "${overall.wins} / ${overall.losses} / ${overall.draws}",
-                        "胜率" to (if (overall.hasData) "${(overall.winRate * 100).toInt()}%" else "—"),
-                        "当前连胜" to (if (streak > 0) "$streak 连胜" else "—"),
-                        "最长连胜" to "${StatsCalculator.longestWinStreak(records)} 连胜",
-                    ))
+                    SumItem("总对局", "${overall.total}")
+                    SumItem("胜", "${overall.wins}", Accent)
+                    SumItem("负", "${overall.losses}", AccentWarm)
+                    SumItem(
+                        "胜率",
+                        if (overall.hasData) "${(overall.winRate * 100).toInt()}%" else "—",
+                        FocusRing,
+                    )
+                }
 
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
                     if (byDifficulty.isNotEmpty()) {
-                        GroupCard("按难度", byDifficulty)
+                        GroupCard("按难度", byDifficulty, Modifier.weight(1f).fillMaxHeight())
                     }
                     if (bySize.isNotEmpty()) {
-                        GroupCard("按棋盘", bySize)
+                        GroupCard("按棋盘", bySize, Modifier.weight(1f).fillMaxHeight())
                     }
-
-                    Spacer(Modifier.weight(1f))
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        TvButton(label = "返回主菜单", onClick = onBack, focusRequester = backFocus)
-                        if (records.isNotEmpty()) {
-                            TvButton(
-                                label = if (confirmClear) "再按一次确认清空" else "清空记录",
-                                onClick = { if (confirmClear) onClear() else confirmClear = true },
-                                danger = true,
-                                subtitle = if (confirmClear) "清空后无法恢复" else null,
-                            )
+                    if (byDifficulty.isEmpty() && bySize.isEmpty()) {
+                        SectionCard(title = "数据", modifier = Modifier.weight(1f)) {
+                            Text(text = "下完第一局就有统计了", color = TextDim, fontSize = 21.sp)
+                            Spacer(Modifier.height(6.dp))
+                            Text(text = "当前连胜 ${if (streak > 0) "$streak" else "—"}", color = TextSecondary, fontSize = 21.sp)
                         }
                     }
                 }
 
-                Spacer(Modifier.width(28.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TvButton(
+                        label = "返回主菜单",
+                        style = TvButtonStyle.PRIMARY,
+                        onClick = onBack,
+                        focusRequester = backFocus,
+                    )
+                    if (records.isNotEmpty()) {
+                        TvButton(
+                            label = if (confirmClear) "再按一次确认清空" else "清空记录",
+                            subtitle = if (confirmClear) "清空后无法恢复" else null,
+                            style = TvButtonStyle.DANGER,
+                            onClick = { if (confirmClear) onClear() else confirmClear = true },
+                        )
+                    }
+                }
+            }
 
-                // ---- 右：逐局列表 ----
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(ordered, key = { it.id }) { record ->
-                        RecordRow(record)
+            Spacer(Modifier.width(22.dp))
+
+            // ---- 右：逐局列表 ----
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .focusRequester(pageFocus)
+                    .focusable()
+                    .onKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                        when (event.key) {
+                            Key.DirectionUp -> {
+                                scope.launch { listState.scrollBy(-140f) }
+                                true
+                            }
+                            Key.DirectionDown -> {
+                                scope.launch { listState.scrollBy(140f) }
+                                true
+                            }
+                            else -> false
+                        }
+                    },
+            ) {
+                if (ordered.isEmpty()) {
+                    SectionCard(modifier = Modifier.fillMaxWidth()) {
+                        Text(text = "还没有下过棋", color = TextSecondary, fontSize = 26.sp)
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = "回到首页按「开始对局」，下完一局这里就会记下来",
+                            color = TextDim,
+                            fontSize = 21.sp,
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(ordered, key = { it.id }) { record ->
+                            RecordRow(record)
+                        }
                     }
                 }
             }
@@ -174,53 +231,67 @@ fun HistoryScreen(
     }
 }
 
+/**
+ * 分组统计卡。
+ *
+ * 行数**由数据决定**（按难度最多 5 行、按棋盘最多 3 行），所以这里不能用「够用就行」
+ * 的内边距 —— 记录一多就会把最后一行压扁（布局闸门抓到过：行高 53px 被压成 21px/9px）。
+ * 这里刻意把内边距与行距压小，把高度预算留给行数。
+ */
+/** 总览里的一个「标签 + 数值」。刻意做得扁 —— 见上面总览那段注释。 */
 @Composable
-private fun GroupCard(title: String, groups: List<com.heizhu.weiqi.data.GroupedStats>) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(Surface)
-            .border(1.dp, SurfaceBorder, RoundedCornerShape(14.dp))
-            .padding(16.dp),
-    ) {
-        Text(text = title, color = TextSecondary)
-        Spacer(Modifier.height(10.dp))
-        groups.forEach { group ->
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(text = group.label, color = TextPrimary)
-                Text(
-                    text = "${group.stats.wins}/${group.stats.total}  " +
-                        "${(group.stats.winRate * 100).toInt()}%",
-                    color = rateColor(group.stats),
-                )
-            }
-        }
+private fun SumItem(label: String, value: String, valueColor: androidx.compose.ui.graphics.Color = TextPrimary) {
+    Row(verticalAlignment = Alignment.Bottom) {
+        Text(text = label, color = TextDim, fontSize = 19.sp)
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = value,
+            color = valueColor,
+            fontSize = 26.sp,
+            fontWeight = FontWeight.Black,
+        )
     }
 }
 
 @Composable
-private fun StatsCard(title: String, rows: List<Pair<String, String>>) {
+private fun GroupCard(
+    title: String,
+    groups: List<com.heizhu.weiqi.data.GroupedStats>,
+    modifier: Modifier = Modifier,
+) {
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(Surface)
-            .border(1.dp, SurfaceBorder, RoundedCornerShape(14.dp))
-            .padding(16.dp),
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(Surface.copy(alpha = 0.92f))
+            .border(2.dp, SurfaceBorder, RoundedCornerShape(18.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
     ) {
-        Text(text = title, color = TextSecondary)
-        Spacer(Modifier.height(10.dp))
-        rows.forEach { (label, value) ->
+        Text(text = title, color = Accent, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(6.dp))
+        groups.forEach { group ->
             Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(text = label, color = TextDim)
-                Text(text = value, color = TextPrimary, fontWeight = FontWeight.Medium)
+                Text(text = group.label, color = TextPrimary, fontSize = 20.sp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "${group.stats.wins}/${group.stats.total}",
+                        color = TextDim,
+                        fontSize = 19.sp,
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    // 百分比刻意**不用 Tag**：Tag 自带内边距 + 描边，会把行高从 40px 撑到
+                    // 54px，5 行就多出 70px —— 布局闸门实测按难度卡第 5 行会被压成 11px。
+                    // 行数是数据决定的（最多 5 档），所以每行的高度必须抠。
+                    Text(
+                        text = "${(group.stats.winRate * 100).toInt()}%",
+                        color = rateColor(group.stats),
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
             }
         }
     }
@@ -230,54 +301,72 @@ private fun StatsCard(title: String, rows: List<Pair<String, String>>) {
 private fun RecordRow(record: GameRecord) {
     val (resultText, resultColor) = when {
         record.playerWon > 0 -> "胜" to Accent
-        record.playerWon < 0 -> "负" to Warning
+        record.playerWon < 0 -> "负" to AccentWarm
         else -> "和" to TextDim
     }
     val difficulty = Difficulty.fromId(record.difficultyId)
+    val isBlack = record.playerColorCode == 1
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(18.dp))
             .background(Surface)
-            .border(1.dp, SurfaceBorder, RoundedCornerShape(12.dp))
+            .border(2.dp, SurfaceBorder, RoundedCornerShape(18.dp))
             .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // 用棋子表示「我执什么颜色」，比文字更快认
+        StoneDot(isBlack = isBlack, size = 38.dp)
+        Spacer(Modifier.width(14.dp))
         Box(
             modifier = Modifier
-                .width(40.dp)
-                .height(40.dp)
-                .clip(RoundedCornerShape(10.dp))
+                .width(46.dp)
+                .height(46.dp)
+                .clip(RoundedCornerShape(14.dp))
                 .background(resultColor.copy(alpha = 0.18f))
-                .border(1.dp, resultColor.copy(alpha = 0.6f), RoundedCornerShape(10.dp)),
+                .border(2.dp, resultColor.copy(alpha = 0.7f), RoundedCornerShape(14.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            Text(text = resultText, color = resultColor, fontWeight = FontWeight.Bold)
+            Text(text = resultText, color = resultColor, fontSize = 24.sp, fontWeight = FontWeight.Black)
         }
-        Spacer(Modifier.width(16.dp))
+        Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "${record.boardSize} 路 · ${difficulty.displayName}",
+                    color = TextPrimary,
+                    fontSize = 23.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Spacer(Modifier.width(10.dp))
+                if (record.endedByResign) Tag(text = "认输", color = TextDim)
+                if (record.usedUndo) {
+                    Spacer(Modifier.width(6.dp))
+                    Tag(text = "悔棋 ${record.undoCount}", color = SurfaceAlt)
+                }
+            }
             Text(
-                text = "${record.boardSize} 路 · ${difficulty.displayName} · " +
-                    (if (record.playerColorCode == 1) "执黑" else "执白"),
-                color = TextPrimary,
-            )
-            Text(
-                text = "黑 ${record.blackTotal} : ${record.whiteTotal} 白 · ${record.moveCount} 手" +
-                    (if (record.endedByResign) " · 认输" else "") +
-                    (if (record.usedUndo) " · 悔棋 ${record.undoCount} 次" else ""),
+                // 认输局不数子（见 ResultScreen 注释），存档里的比分是无意义的，
+                // 所以这里也不能显示 —— 否则历史列表里会出现「黑 361 : 0 白」
+                text = if (record.endedByResign) {
+                    "${record.moveCount} 手 · 中盘认输"
+                } else {
+                    "黑 ${record.blackTotal} : ${record.whiteTotal} 白 · ${record.moveCount} 手"
+                },
                 color = TextDim,
+                fontSize = 20.sp,
             )
         }
-        Text(text = relativeTime(record.playedAt), color = TextSecondary)
+        Text(text = relativeTime(record.playedAt), color = TextSecondary, fontSize = 21.sp)
     }
 }
 
-private fun rateColor(stats: WinStats): androidx.compose.ui.graphics.Color = when {
+private fun rateColor(stats: com.heizhu.weiqi.data.WinStats): androidx.compose.ui.graphics.Color = when {
     !stats.hasData -> TextDim
     stats.winRate >= 0.6f -> Accent
     stats.winRate >= 0.35f -> TextPrimary
-    else -> Warning
+    else -> AccentWarm
 }
 
 /** 相对时间。孩子对「3 分钟前」的理解远好于「2026-10-01 19:22」。 */
@@ -290,7 +379,6 @@ private fun relativeTime(timestamp: Long): String {
         minutes < 1 -> "刚刚"
         minutes < 60 -> "$minutes 分钟前"
         hours < 24 -> "$hours 小时前"
-        days < 30 -> "$days 天前"
         else -> "$days 天前"
     }
 }

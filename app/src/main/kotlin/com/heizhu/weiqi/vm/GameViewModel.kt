@@ -1,6 +1,7 @@
 package com.heizhu.weiqi.vm
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.heizhu.weiqi.audio.SoundPlayer
@@ -135,7 +136,10 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
         )
         game = state
         engine = MctsEngine(boardSize)
+        // 记住这一局用的三项设置，下次进「新对局」直接带出来（见 SettingsStore 注释）
         settings.lastBoardSize = boardSize
+        settings.lastDifficultyId = difficulty.id
+        settings.lastPlayerColorCode = playerColor.code.toInt()
 
         _ui.value = GameUi(
             boardSize = boardSize,
@@ -347,9 +351,15 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
                 val move = withContext(Dispatchers.Default) {
                     engineRef.findBestMove(state.board, state.aiColor, state.difficulty, searchRandom)
                 }
+                logSearchStats(engineRef, state)
                 val aiOutcome = state.play(move, state.aiColor)
                 if (aiOutcome is com.heizhu.weiqi.core.game.MoveOutcome.Ok) {
                     playMoveSound(aiOutcome.capturedCount, isPlayer = false)
+                } else {
+                    // 兜底：引擎的候选都过了合法性校验，正常情况下这里不会走到。
+                    // 但**一旦走到，对局会彻底卡死** —— 没有别的地方会再次触发 AI 落子，
+                    // 界面就一直停在「轮到黑猪大人」。所以宁可改判停一手，保证能继续推进。
+                    state.passMove(state.aiColor)
                 }
                 refreshFromGame()
                 if (state.isOver) onGameFinished()
@@ -442,6 +452,27 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
     // ===============================================================
     // 其他
     // ===============================================================
+
+    /**
+     * 把本次搜索的性能数据打到 logcat（tag = WeiqiBench）。
+     *
+     * 存在的唯一理由：**目标设备的真实算力只能实测**。开发机是 24 核桌面 CPU，
+     * 远远强于电视的四核 Cortex-A73，任何「估算」都可能差好几倍。
+     * 在电视上连 adb 抓这个 tag，就能拿到真实的 playout 速率，
+     * 用来校准各难度档的时间预算。
+     *
+     *   adb logcat -s WeiqiBench
+     */
+    private fun logSearchStats(engineRef: MctsEngine, state: GameState) {
+        val stats = engineRef.lastStats ?: return
+        Log.i(
+            "WeiqiBench",
+            "board=${state.size} difficulty=${state.difficulty.id} " +
+                "playouts=${stats.playouts} elapsedMs=${stats.elapsedMs} " +
+                "rate=%.0f/s candidates=${stats.candidateCount}"
+                    .format(stats.playoutsPerSecond),
+        )
+    }
 
     /**
      * 播放落子音效。

@@ -21,6 +21,10 @@ serializationJson = "1.11.0"
 
 # 测试
 junit = "4.13.2"
+# Robolectric：在**本机 JVM** 上跑 Android/Compose 界面测试 ——
+# 不用电视、不用模拟器、不用截图。断言输出文字，又快又省。
+robolectric = "4.17"
+androidxTestJunit = "1.2.1"
 
 [libraries]
 # --- AndroidX 基础 ---
@@ -44,6 +48,11 @@ kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 
 # --- 测试 ---
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestJunit" }
+# Compose 测试 API（版本由 BOM 管）
+compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
+compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

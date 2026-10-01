@@ -135,7 +135,8 @@ class Board(val size: Int) {
         //    必须在**提子之后**才算自己的气：提子腾出的空点可能恰好是自己
         //    新的气。若把这一步挪到提子之前，合法的「提子逃出」会被误判为
         //    自杀 —— 这是围棋规则实现里最常见的 bug。
-        if (finder.findLiberties(cells, index) == 0) {
+        val ownLiberties = finder.findLiberties(cells, index)
+        if (ownLiberties == 0) {
             rollback(index, oppCode, capturedCount)
             return PlayOutcome.Suicide
         }
@@ -145,7 +146,7 @@ class Board(val size: Int) {
         if (!commit) {
             // 预览模式：判定完立即撤回，棋盘保持原样
             rollback(index, oppCode, capturedCount)
-            return PlayOutcome.Ok(captured)
+            return PlayOutcome.Ok(captured, ownLiberties)
         }
 
         // ④ 提交，更新劫点与统计
@@ -161,7 +162,7 @@ class Board(val size: Int) {
             whiteCaptured += capturedCount
         }
 
-        return PlayOutcome.Ok(captured)
+        return PlayOutcome.Ok(captured, ownLiberties)
     }
 
     /** 撤销一次试落：恢复被提的子，并清掉落子点。 */

@@ -51,6 +51,14 @@ android {
             "META-INF/*.kotlin_module",
         )
     }
+
+    testOptions {
+        unitTests {
+            // Robolectric 在 JVM 上跑界面测试时必须打开：否则读不到 res 资源
+            // （字符串、drawable 全部拿不到，界面直接崩）
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 dependencies {
@@ -74,10 +82,28 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
 
     testImplementation(libs.junit)
+
+    // ---- 本机 UI 自测（Robolectric + Compose UI test）----
+    // 在开发机的 JVM 上渲染真实的 Compose 界面并断言，不依赖电视/模拟器，也不用截图。
+    // 能测到：页面渲染、文字内容、**布局边界（是否被压扁/越界）**、焦点所在单元。
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.ext.junit)
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
+    debugImplementation(libs.compose.ui.test.manifest)
 }
 
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
+// 让 UI 自测里的 println 显示出来 —— 布局尺寸、焦点位置这些实测值靠它输出
+tasks.withType<Test> {
+    testLogging {
+        events("passed", "failed", "skipped")
+        showStandardStreams = true
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     }
 }

@@ -1,8 +1,8 @@
 package com.heizhu.weiqi.ui.home
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -24,6 +26,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -32,22 +36,29 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import com.heizhu.weiqi.R
 import com.heizhu.weiqi.core.ai.Difficulty
 import com.heizhu.weiqi.core.rules.Stone
 import com.heizhu.weiqi.data.GameRecord
 import com.heizhu.weiqi.data.StatsCalculator
+import com.heizhu.weiqi.ui.components.SectionCard
+import com.heizhu.weiqi.ui.components.StatTile
+import com.heizhu.weiqi.ui.components.StoneDot
 import com.heizhu.weiqi.ui.components.TvButton
+import com.heizhu.weiqi.ui.components.TvButtonStyle
+import com.heizhu.weiqi.ui.components.TvIcon
 import com.heizhu.weiqi.ui.components.TvOptionRow
 import com.heizhu.weiqi.ui.components.TvScaffold
 import com.heizhu.weiqi.ui.theme.Accent
-import com.heizhu.weiqi.ui.theme.Surface
+import com.heizhu.weiqi.ui.theme.AccentWarm
+import com.heizhu.weiqi.ui.theme.Background
+import com.heizhu.weiqi.ui.theme.FocusRing
 import com.heizhu.weiqi.ui.theme.SurfaceBorder
 import com.heizhu.weiqi.ui.theme.TextDim
 import com.heizhu.weiqi.ui.theme.TextPrimary
 import com.heizhu.weiqi.ui.theme.TextSecondary
-import com.heizhu.weiqi.ui.theme.WoodDark
 import com.heizhu.weiqi.ui.theme.WoodLight
 
 /**
@@ -56,12 +67,13 @@ import com.heizhu.weiqi.ui.theme.WoodLight
  * ## 焦点为什么由页面自己管
  * 第一版让每个按钮各自 `focusable()`，靠 Compose 的空间导航自动找「下面那个元素」。
  * 模拟器实测**不可靠**：按键后焦点不按预期移动，自动化脚本连设置页都走不出去。
- *
  * 现在改成显式管理：页面持有每个可聚焦单元的 [FocusRequester] 和当前索引，
- * 上下键由页面统一处理。大屏应用的可聚焦元素数量有限，显式管理比赌自动导航稳。
+ * 上下键由页面统一处理。
  *
- * 布局用 `weight` + `SpaceEvenly` 自适应，**不再写死间距** ——
- * 第一版固定 14dp 间距，在 1080p 上把「退出」按钮挤出了屏幕。
+ * ## 布局预算（1080p = 540dp 高，改任何尺寸前先读这段）
+ * 页面可用高度 ≈ 540 - 上下留白 52 - 底部提示条 56 = 432dp。
+ * 左列 = 标题块 60 + 4 个按钮。按钮纵向 padding 压到 13dp，
+ * 加起来 381dp，留 50dp 余量。**加高任何一个按钮都要重新核一遍 432dp 这个预算。**
  */
 @Composable
 fun HomeScreen(
@@ -98,150 +110,183 @@ fun HomeScreen(
             },
     ) {
         TvScaffold(hint = "上下键选择 · OK 确认") {
-            Column(modifier = Modifier.fillMaxSize()) {
-                // ---- 标题 ----
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .width(12.dp)
-                            .height(52.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(WoodLight),
+            Row(modifier = Modifier.fillMaxSize()) {
+                // ---- 左：标题 + 主按钮 ----
+                Column(modifier = Modifier.width(460.dp).fillMaxSize()) {
+                    HomeTitle()
+                    Spacer(Modifier.height(14.dp))
+                    TvButton(
+                        label = "开始对局",
+                        subtitle = "选好棋盘和难度就能下",
+                        icon = TvIcon.PLAY,
+                        style = TvButtonStyle.PRIMARY,
+                        onClick = onStartGame,
+                        focusRequester = focusRequesters[0],
+                        fillWidth = true,
                     )
-                    Spacer(Modifier.width(16.dp))
-                    Column {
-                        Text(
-                            // 从资源读取 —— 第一版把「围棋练习」硬编码在这里，
-                            // 改了 app_name 界面却没变
-                            text = stringResource(R.string.app_name),
-                            color = TextPrimary,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Text(
-                            text = "和黑猪大人下棋 · 从 9 路开始",
-                            color = TextSecondary,
-                        )
-                    }
+                    Spacer(Modifier.height(12.dp))
+                    TvButton(
+                        label = "历史战绩",
+                        icon = TvIcon.HISTORY,
+                        onClick = onHistory,
+                        focusRequester = focusRequesters[1],
+                        fillWidth = true,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    TvButton(
+                        label = "设置",
+                        icon = TvIcon.SETTINGS,
+                        onClick = onSettings,
+                        focusRequester = focusRequesters[2],
+                        fillWidth = true,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    TvButton(
+                        label = "退出",
+                        icon = TvIcon.EXIT,
+                        style = TvButtonStyle.DANGER,
+                        onClick = onExit,
+                        focusRequester = focusRequesters[3],
+                        fillWidth = true,
+                    )
                 }
 
-                Spacer(Modifier.height(18.dp))
+                Spacer(Modifier.width(24.dp))
 
-                Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                    // ---- 主按钮区：高度自适应 ----
-                    Column(
-                        modifier = Modifier.width(340.dp).fillMaxSize(),
-                        verticalArrangement = Arrangement.SpaceEvenly,
-                    ) {
-                        TvButton(
-                            label = "开始对局",
-                            subtitle = "选好棋盘和难度就能下",
-                            onClick = onStartGame,
-                            focusRequester = focusRequesters[0],
-                        )
-                        TvButton(
-                            label = "历史战绩",
-                            subtitle = if (records.isEmpty()) "还没有下过棋" else "已下 ${records.size} 局",
-                            onClick = onHistory,
-                            focusRequester = focusRequesters[1],
-                        )
-                        TvButton(
-                            label = "设置",
-                            onClick = onSettings,
-                            focusRequester = focusRequesters[2],
-                        )
-                        TvButton(
-                            label = "退出",
-                            onClick = onExit,
-                            danger = true,
-                            focusRequester = focusRequesters[3],
-                        )
-                    }
-
-                    Spacer(Modifier.width(32.dp))
-
-                    // ---- 右侧战绩概览 ----
-                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                        HomeSummary(records)
-                    }
-                }
+                // ---- 右：战绩概览 ----
+                HomeSummary(records, modifier = Modifier.weight(1f).fillMaxSize())
             }
+        }
+    }
+}
+
+/** 首页标题块：色条 + 应用名 + 两颗棋子。棋子让顶部立刻有「围棋」的味道。 */
+@Composable
+private fun HomeTitle() {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .width(12.dp)
+                .height(58.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(WoodLight),
+        )
+        Spacer(Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                // 从资源读取 —— 第一版把「围棋练习」硬编码在这里，改了 app_name 界面却没变
+                text = stringResource(R.string.app_name),
+                color = TextPrimary,
+                fontSize = 40.sp,
+                fontWeight = FontWeight.Black,
+            )
+            Text(
+                text = "和黑猪大人下棋 · 从 9 路开始",
+                color = TextSecondary,
+                fontSize = 21.sp,
+            )
+        }
+        Row {
+            StoneDot(isBlack = true, size = 34.dp)
+            Spacer(Modifier.width(4.dp))
+            StoneDot(isBlack = false, size = 34.dp)
         }
     }
 }
 
 /** 首页右侧的成长概览。让孩子每次进来都能看见自己的进步。 */
 @Composable
-private fun HomeSummary(records: List<GameRecord>) {
+private fun HomeSummary(records: List<GameRecord>, modifier: Modifier = Modifier) {
     val stats = remember(records) { StatsCalculator.overall(records) }
     val streak = remember(records) { StatsCalculator.currentStreak(records) }
     val best = remember(records) { StatsCalculator.longestWinStreak(records) }
     val recent = remember(records) { StatsCalculator.recentResults(records, 10) }
 
-    Column(
-        modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(Surface)
-            .border(1.dp, SurfaceBorder, RoundedCornerShape(16.dp))
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Text(text = "我的成绩", color = TextSecondary)
-
-        Row(horizontalArrangement = Arrangement.spacedBy(32.dp)) {
-            StatBlock("总对局", "${stats.total}")
-            StatBlock("胜", "${stats.wins}")
-            StatBlock("负", "${stats.losses}")
-            StatBlock("胜率", if (stats.hasData) "${(stats.winRate * 100).toInt()}%" else "—")
+    SectionCard(title = "我的成绩", modifier = modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+            StatTile("总对局", "${stats.total}")
+            StatTile("胜", "${stats.wins}", valueColor = Accent)
+            StatTile("负", "${stats.losses}", valueColor = AccentWarm)
+            StatTile(
+                "胜率",
+                if (stats.hasData) "${(stats.winRate * 100).toInt()}%" else "—",
+                valueColor = FocusRing,
+            )
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(32.dp)) {
-            StatBlock("当前连胜", if (streak > 0) "$streak" else "—")
-            StatBlock("最长连胜", "$best")
+        Spacer(Modifier.height(18.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+            StatTile("当前连胜", if (streak > 0) "$streak" else "—", valueColor = Accent)
+            StatTile("最长连胜", "$best", valueColor = FocusRing)
         }
 
-        Column {
-            Text(text = "最近 10 局", color = TextDim)
-            Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(18.dp))
+
+        Text(text = "最近 10 局", color = TextDim, fontSize = 20.sp)
+        Spacer(Modifier.height(8.dp))
+
+        if (recent.isEmpty()) {
+            Text(text = "还没有记录 · 下第一局吧", color = TextDim, fontSize = 21.sp)
+        } else {
+            // 用棋子形状表示胜负：比纯色方块更像围棋，孩子也能一眼扫出趋势
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (recent.isEmpty()) {
-                    Text(text = "还没有记录", color = TextDim)
-                } else {
-                    recent.forEach { result ->
-                        val color = when {
+                recent.forEach { result ->
+                    Canvas(modifier = Modifier.size(30.dp)) {
+                        val r = size.minDimension / 2f
+                        val c = Offset(r, r)
+                        val fill = when {
                             result > 0 -> Accent
-                            result < 0 -> WoodDark
+                            result < 0 -> AccentWarm
                             else -> TextDim
                         }
-                        Box(
-                            modifier = Modifier
-                                .width(20.dp)
-                                .height(20.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(color),
-                        )
+                        drawCircle(fill.copy(alpha = 0.25f), r, c)
+                        drawCircle(fill, r * 0.62f, c)
                     }
                 }
             }
         }
-    }
-}
 
-@Composable
-private fun StatBlock(label: String, value: String) {
-    Column {
-        Text(text = value, color = TextPrimary, fontWeight = FontWeight.Bold)
-        Text(text = label, color = TextDim)
+        Spacer(Modifier.weight(1f))
+
+        // 底部一句鼓励语：孩子赢一局回来就能看到变化
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(Accent.copy(alpha = 0.12f))
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+        ) {
+            Text(
+                text = when {
+                    stats.total == 0 -> "今天先下 9 路盘，吃子快、几分钟就一盘"
+                    stats.winRate >= 0.6f -> "赢得多，可以试试 13 路或者更难的档位"
+                    stats.total >= 5 -> "多下一局就会变强，输棋也是练计算"
+                    else -> "刚开局，慢慢熟悉棋盘吧"
+                },
+                color = TextSecondary,
+                fontSize = 21.sp,
+            )
+        }
     }
 }
 
 /**
  * 对局设置页。
  *
- * 焦点单元共 4 个：3 个选择行 + 1 个按钮行。上下键由页面统一移动焦点，
- * 左右键**不拦截**（放给当前行改值）。
+ * ## 为什么改成左右分栏（2026-10-01）
+ * 第一版三行选择器竖着排，1080p 上**放不下**：三行各要 304px（共 912px），
+ * 但页头与按钮之间只有 712px。结果是第三行「执什么颜色」被压扁成 16px 高，
+ * 选项和说明在控件树里直接不存在 —— 孩子改不了执棋颜色，而且看不出这是 bug。
  *
- * 初始焦点落在第一行选择器而不是「开始对局」按钮：用户进这一页绝大多数时候
- * 是要先改设置。
+ * 现在：左列放两个较宽的选择器（棋盘、难度），右列放颜色 + 按钮。
+ * 内容总高降到 ~270dp，可用高度 366dp，留出余量。
  */
 @Composable
 fun NewGameScreen(
@@ -260,13 +305,18 @@ fun NewGameScreen(
 
     val unitCount = 4
     val focusRequesters = remember { List(unitCount) { FocusRequester() } }
-    var focusIndex by remember { mutableStateOf(0) }
+    // 初始焦点直接放在最后一项「开始对局」上。
+    //
+    // 三项设置都已沿用上次的值（见 SettingsStore），所以绝大多数情况下用户进这一页
+    // 就是想直接再开一局 —— 再让他按方向键挪到按钮上纯属多余。
+    // 要改设置的话，往上按一格就是了。
+    var focusIndex by remember { mutableStateOf(unitCount - 1) }
 
     LaunchedEffect(focusIndex) {
         runCatching { focusRequesters[focusIndex].requestFocus() }
     }
 
-    // 返回键回主菜单，而不是把整个应用关掉
+    // 上下键在 4 个焦点单元间移动；左右键放给当前那行改值
     BackHandler { onBack() }
 
     Box(
@@ -289,13 +339,13 @@ fun NewGameScreen(
     ) {
         TvScaffold(
             title = "新对局",
-            hint = "上下键换焦点 · 左右键改值 · 到「开始对局」按 OK",
+            hint = "上下键换位置 · 左右键改选项 · 到「开始对局」按 OK",
         ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                // 三行选择器：SpaceEvenly 自适应，避免第 3 行被屏幕底部截断
+            Row(modifier = Modifier.fillMaxSize()) {
+                // ---- 左列：需要宽度的两个选择器 ----
                 Column(
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    verticalArrangement = Arrangement.SpaceEvenly,
+                    modifier = Modifier.weight(1f).fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     TvOptionRow(
                         title = "棋盘大小",
@@ -306,7 +356,7 @@ fun NewGameScreen(
                             when (size) {
                                 9 -> "吃子快、一盘只要几分钟，最适合刚开始学"
                                 13 -> "介于两者之间，练计算和死活的好地方"
-                                else -> "标准棋盘。黑猪大人在这个尺寸上会弱一些，但更接近正式对局"
+                                else -> "标准棋盘。黑猪大人在这个尺寸上会弱一些"
                             }
                         },
                         onSelect = { sizeIndex = it },
@@ -317,15 +367,25 @@ fun NewGameScreen(
                         options = Difficulty.entries,
                         selectedIndex = diffIndex,
                         labelOf = { it.displayName },
-                        descriptionOf = { it.description },
+                        // 用 descriptionFor 而不是 description：难度文案里
+                        // 有跟棋盘尺寸相关的部分（见 Difficulty）
+                        descriptionOf = { it.descriptionFor(sizes[sizeIndex]) },
                         onSelect = { diffIndex = it },
                         focusRequester = focusRequesters[1],
                     )
+                }
+
+                Spacer(Modifier.width(24.dp))
+
+                // ---- 右列：执棋颜色 + 开始按钮 ----
+                Column(
+                    modifier = Modifier.width(400.dp).fillMaxSize(),
+                ) {
                     TvOptionRow(
                         title = "黑猪勇士执什么颜色",
                         options = listOf(Stone.BLACK, Stone.WHITE),
                         selectedIndex = colorIndex,
-                        labelOf = { if (it == Stone.BLACK) "黑棋（先下）" else "白棋（后下）" },
+                        labelOf = { if (it == Stone.BLACK) "黑棋" else "白棋" },
                         descriptionOf = {
                             if (it == Stone.BLACK) "黑棋先下，通常更容易赢一点"
                             else "白棋后下，黑猪大人先走"
@@ -333,13 +393,13 @@ fun NewGameScreen(
                         onSelect = { colorIndex = it },
                         focusRequester = focusRequesters[2],
                     )
-                }
 
-                Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.weight(1f))
 
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     TvButton(
                         label = "开始对局",
+                        icon = TvIcon.PLAY,
+                        style = TvButtonStyle.PRIMARY,
                         onClick = {
                             onStart(
                                 sizes[sizeIndex],
@@ -348,8 +408,10 @@ fun NewGameScreen(
                             )
                         },
                         focusRequester = focusRequesters[3],
+                        fillWidth = true,
                     )
-                    TvButton(label = "返回", onClick = onBack)
+                    Spacer(Modifier.height(10.dp))
+                    TvButton(label = "返回", onClick = onBack, fillWidth = true)
                 }
             }
         }

@@ -1,6 +1,8 @@
 package com.heizhu.weiqi.data
 
 import android.content.Context
+import com.heizhu.weiqi.core.ai.Difficulty
+import com.heizhu.weiqi.core.rules.Stone
 
 /**
  * 用户偏好设置。
@@ -30,16 +32,37 @@ class SettingsStore(context: Context) {
         get() = prefs.getBoolean(KEY_HAPTIC, false)
         set(value) = prefs.edit().putBoolean(KEY_HAPTIC, value).apply()
 
-    /** 上次选择的棋盘尺寸，用于「再来一局」时沿用 */
+    /**
+     * 上次对局用的三项设置（棋盘 / 难度 / 执色）。
+     *
+     * 记住它们是为了让「新对局」页**开箱就是上次那套** —— 孩子通常会连续好几局
+     * 都练同一档位，每局都重选一遍是纯粹的摩擦。焦点也直接落在「开始对局」上，
+     * 于是「再来一局」按两下 OK 就能开。
+     *
+     * 首次运行的默认值是「9 路 · 入门 · 执黑」：孩子第一局要能赢下来，
+     * 建立信心比「有挑战」重要得多。
+     */
     var lastBoardSize: Int
         get() = prefs.getInt(KEY_BOARD_SIZE, 9)
         set(value) = prefs.edit().putInt(KEY_BOARD_SIZE, value).apply()
+
+    /** 上次用的难度档位 id，对应 [Difficulty.id]。 */
+    var lastDifficultyId: String
+        get() = prefs.getString(KEY_DIFFICULTY, Difficulty.ENTRY.id) ?: Difficulty.ENTRY.id
+        set(value) = prefs.edit().putString(KEY_DIFFICULTY, value).apply()
+
+    /** 上次玩家执的颜色（[Stone.code]：1=黑 2=白）。 */
+    var lastPlayerColorCode: Int
+        get() = prefs.getInt(KEY_PLAYER_COLOR, Stone.BLACK.code.toInt())
+        set(value) = prefs.edit().putInt(KEY_PLAYER_COLOR, value).apply()
 
     companion object {
         private const val KEY_SOUND = "sound_enabled"
         private const val KEY_CURSOR_SPEED = "cursor_speed"
         private const val KEY_HAPTIC = "haptic_enabled"
         private const val KEY_BOARD_SIZE = "last_board_size"
+        private const val KEY_DIFFICULTY = "last_difficulty_id"
+        private const val KEY_PLAYER_COLOR = "last_player_color_code"
     }
 }
 

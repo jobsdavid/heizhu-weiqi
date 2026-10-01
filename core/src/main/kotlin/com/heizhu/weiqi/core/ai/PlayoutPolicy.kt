@@ -97,18 +97,33 @@ class PlayoutPolicy(private val size: Int) {
             }
         }
 
-        // 四周全空：不是不能下，但不着急，给最低权重
-        if (friendly == 0 && enemy == 0) return 1
-
+        // 贴着双方棋子的点价值最高；四周全空的点也不该被压成最低档。
+        //
+        // 原实现是 `if (friendly == 0 && enemy == 0) return 1` —— 它在**跳过一线惩罚之前**
+        // 就返回了，于是空盘上 81 个点全部同分，开局第一手等于随机摸。
+        // 实测结果：9 路空盘第一手落在 A7，也就是一线（见 AiDiagnosticTest）。
         var weight = 4 + friendly * 2 + enemy * 2
 
-        // 第一线（棋盘边）在围棋里价值低，压低权重
-        val col = index % size
-        val row = index / size
-        if (col == 0 || row == 0 || col == size - 1 || row == size - 1) {
-            weight -= 2
-        }
+        weight += lineValue(index % size, index / size)
 
         return if (weight < 1) 1 else weight
+    }
+
+    /**
+     * 「线」的位置价值 —— 围棋最基本的棋理之一：一线最次、二线偏低、
+     * 三线四线最好、中腹偏空。
+     *
+     * 只惩罚一线是不够的。实测自战 30 手，AI 的子几乎全部沿着一线/二线排开：
+     * 随机走子下「沿边爬」最省事，没有正分把它拉回三线四线。必须给三线/四线加分。
+     */
+    private fun lineValue(col: Int, row: Int): Int {
+        val line = minOf(col, row, size - 1 - col, size - 1 - row) + 1
+        return when (line) {
+            1 -> -4
+            2 -> -1
+            3 -> 3
+            4 -> 2
+            else -> 0
+        }
     }
 }

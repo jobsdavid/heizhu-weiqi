@@ -34,8 +34,23 @@
             android:screenOrientation="landscape">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-                <!-- 电视启动器入口 -->
+                <!--
+                  两个类别都要声明，少一个就会「装了却找不到」：
+
+                  · LEANBACK_LAUNCHER —— 标准 Android TV 启动器入口
+                  · LAUNCHER           —— 小米/部分国产电视的「应用」列表按这个枚举
+
+                  实测（小米电视 MiTV-MFFU0 / tvhome 4.8.413）：
+                  只声明 LEANBACK_LAUNCHER 时，系统里按普通 LAUNCHER 查询返回
+                  「No activity found」，应用在电视的「应用」页里根本不出现 ——
+                  应用是装好的（installed=true/hidden=false），用户却找不到。
+
+                  一个 intent-filter 里同时声明两个类别是合法的：
+                  过滤器匹配要求「意图的类别是过滤器类别的子集」，
+                  所以 MAIN+LEANBACK_LAUNCHER 和 MAIN+LAUNCHER 都能命中。
+                -->
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+                <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 

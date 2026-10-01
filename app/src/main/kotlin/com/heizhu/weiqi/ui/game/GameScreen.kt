@@ -1,15 +1,19 @@
 package com.heizhu.weiqi.ui.game
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,23 +34,30 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
+import com.heizhu.weiqi.R
 import com.heizhu.weiqi.core.rules.Stone
 import com.heizhu.weiqi.data.CursorSpeed
+import com.heizhu.weiqi.ui.components.StoneDot
 import com.heizhu.weiqi.ui.theme.Accent
+import com.heizhu.weiqi.ui.theme.AccentWarm
 import com.heizhu.weiqi.ui.theme.Background
-import com.heizhu.weiqi.ui.theme.CursorRing
+import com.heizhu.weiqi.ui.theme.BackgroundTop
 import com.heizhu.weiqi.ui.theme.Danger
-import com.heizhu.weiqi.ui.theme.StoneBlack
-import com.heizhu.weiqi.ui.theme.StoneWhite
+import com.heizhu.weiqi.ui.theme.FocusRing
+import com.heizhu.weiqi.ui.theme.Scrim
 import com.heizhu.weiqi.ui.theme.Success
 import com.heizhu.weiqi.ui.theme.Surface
 import com.heizhu.weiqi.ui.theme.SurfaceBorder
@@ -84,6 +95,8 @@ private enum class Dir(val dx: Int, val dy: Int) {
  *
  * 长按加速**不依赖系统按键重复**，而是自己计时：系统的重复速率无法控制
  * 加速度曲线，而且首发延迟在不同电视上不一致。
+ *
+ * 视觉上「棋盘是唯一的主角」：两侧面板刻意压低对比度，焦点全交给棋盘。
  */
 @Composable
 fun GameScreen(
@@ -162,8 +175,6 @@ fun GameScreen(
                     menuOpen = false
                     when (menuIndex) {
                         // 「继续下棋」不需要额外动作 —— 关掉菜单本身就是在继续。
-                        // （这里不能调 PauseMenu 的 onResume，它是那个 composable 的参数，
-                        //   在 handleKey 作用域里不可见。）
                         0 -> Unit
                         1 -> onUndo()
                         2 -> onHint()
@@ -226,77 +237,100 @@ fun GameScreen(
     // 返回键就会冒泡到系统把整个应用关掉。这里兜一层，保证返回键始终是「悔棋」。
     BackHandler { onUndo() }
 
+    // 面板上显示「提了多少子」。棋盘层记的是「黑方提掉的白子」，
+    // 所以必须按各自实际执的颜色换算一次，否则两个面板的数字会串。
+    val aiColor = ui.playerColor.opponent
+    val aiIsBlack = aiColor == Stone.BLACK
+    val aiCaptured = if (aiIsBlack) ui.blackCaptured else ui.whiteCaptured
+    val playerCaptured = if (aiIsBlack) ui.whiteCaptured else ui.blackCaptured
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Background)
+            .background(Brush.verticalGradient(listOf(BackgroundTop, Background)))
             .focusRequester(focusRequester)
             .focusable()
             .onPreviewKeyEvent { handleKey(it) },
     ) {
-        Column(modifier = Modifier.fillMaxSize().padding(20.dp)) {
-            TopBar(ui)
-            Spacer(Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth().weight(1f),
-                // 面板靠上对齐而不是垂直居中：左下角要腾出空间放放大镜，
-                // 第一版居中时放大镜直接压住了「黑棋」面板，把「黑猪勇士」标签遮掉一半。
-                verticalAlignment = Alignment.Top,
+        // 布局：左右两条侧栏 + 中间棋盘吃满整个高度。
+        //
+        // **横跨整屏的顶栏与底栏全部取消，信息挪进侧栏** —— 这是专门为了棋盘面积：
+        // 棋盘是正方形、受高度限制，而每一条通栏状态栏都在从棋盘身上直接切掉
+        // 同样高度的一条。实测去掉两条栏后木面从 825px 涨到约 1030px（+25%）。
+        //
+        // 代价是「轮到谁」不再有一句大字横在屏幕顶端，改为由两侧面板承担：
+        // 该走的一方整块面板描边变暖黄 + 头像外环加粗 + 面板上直接写「该你了／思考中…」。
+        // 纵向留白**上紧下松**：顶部只是视觉呼吸，而底部必须给电视的 overscan
+        // 安全区留位置 —— 不少电视会把画面外圈裁掉几个百分点。布局闸门抓到过
+        // 侧栏底部的「第 N 手·悔棋」贴到 y2=1064（距屏幕底仅 16px）。
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 24.dp),
+        ) {
+            // ---- 左栏：黑猪大人（固定左侧）+ 局面信息 ----
+            Column(
+                modifier = Modifier.width(176.dp).fillMaxHeight(),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+                Spacer(Modifier.weight(1f))
                 PlayerPanel(
-                    title = "黑棋",
-                    isPlayer = ui.playerColor == Stone.BLACK,
-                    captured = ui.blackCaptured,
-                    isTurn = !ui.isOver && ui.toMove == Stone.BLACK,
-                    stoneColor = StoneBlack,
-                    modifier = Modifier.width(150.dp),
+                    name = "黑猪大人",
+                    avatarRes = R.drawable.avatar_boss,
+                    ringColor = AccentWarm,
+                    stoneIsBlack = aiIsBlack,
+                    captured = aiCaptured,
+                    isTurn = !ui.isOver && ui.toMove == aiColor,
+                    statusText = if (ui.thinking) "思考中…" else null,
+                    modifier = Modifier.fillMaxWidth(),
                 )
-                Box(
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    BoardCanvas(
-                        boardSize = ui.boardSize,
-                        cells = ui.cells,
-                        lastMoveX = ui.lastMoveX,
-                        lastMoveY = ui.lastMoveY,
-                        cursorX = ui.cursorX,
-                        cursorY = ui.cursorY,
-                        cursorVisible = !ui.isOver && !ui.thinking,
-                        previewCapture = ui.previewCapture,
-                        previewIllegal = ui.previewIllegal,
-                        previewColor = ui.playerColor,
-                        hintX = ui.hintX,
-                        hintY = ui.hintY,
-                        modifier = Modifier.aspectRatio(1f).fillMaxHeight(),
-                    )
-                }
-                PlayerPanel(
-                    title = "白棋",
-                    isPlayer = ui.playerColor == Stone.WHITE,
-                    captured = ui.whiteCaptured,
-                    isTurn = !ui.isOver && ui.toMove == Stone.WHITE,
-                    stoneColor = StoneWhite,
-                    modifier = Modifier.width(150.dp),
+                Spacer(Modifier.weight(1f))
+                TurnIndicator(ui)
+            }
+
+            // ---- 中间：棋盘占满全部可用高度 ----
+            Box(
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                contentAlignment = Alignment.Center,
+            ) {
+                BoardCanvas(
+                    boardSize = ui.boardSize,
+                    cells = ui.cells,
+                    lastMoveX = ui.lastMoveX,
+                    lastMoveY = ui.lastMoveY,
+                    cursorX = ui.cursorX,
+                    cursorY = ui.cursorY,
+                    cursorVisible = !ui.isOver && !ui.thinking,
+                    previewCapture = ui.previewCapture,
+                    previewIllegal = ui.previewIllegal,
+                    previewColor = ui.playerColor,
+                    hintX = ui.hintX,
+                    hintY = ui.hintY,
+                    // 直接占满盒子：BoardCanvas 内部按「最短边」算格距并居中，
+                    // 给满约束 = 它能画出的最大棋盘。
+                    modifier = Modifier.fillMaxSize(),
                 )
             }
-            Spacer(Modifier.height(8.dp))
-            BottomBar(ui)
-        }
 
-        // 放大镜：显示光标周围 5x5 区域。
-        //
-        // 只在 13 路 / 19 路出现 —— 9 路棋盘在 1080p 下格距接近 100px、棋子直径 90px 开外，
-        // 2 米外也看得清清楚楚，叠个放大镜纯属白占地方；而 9 路正是孩子的主战场。
-        //
-        // 底部留 72dp 是为了不越出棋盘区、压住底部提示栏。
-        if (!ui.isOver && ui.boardSize >= 13) {
-            Magnifier(
-                ui,
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(start = 20.dp, bottom = 72.dp),
-            )
+            // ---- 右栏：黑猪勇士（固定右侧）+ 操作提示 ----
+            Column(
+                modifier = Modifier.width(176.dp).fillMaxHeight(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Spacer(Modifier.weight(1f))
+                PlayerPanel(
+                    name = "黑猪勇士",
+                    avatarRes = R.drawable.avatar_warrior,
+                    ringColor = Accent,
+                    stoneIsBlack = ui.playerColor == Stone.BLACK,
+                    captured = playerCaptured,
+                    isTurn = !ui.isOver && ui.toMove == ui.playerColor,
+                    statusText = if (!ui.isOver && ui.toMove == ui.playerColor) "该你了" else null,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.weight(1f))
+                HintBox(ui)
+            }
         }
 
         if (ui.thinking) {
@@ -304,7 +338,7 @@ fun GameScreen(
         }
 
         ui.toast?.let { message ->
-            ToastBanner(message, modifier = Modifier.align(Alignment.TopCenter).padding(top = 24.dp))
+            ToastBanner(message, modifier = Modifier.align(Alignment.TopCenter).padding(top = 20.dp))
         }
 
         if (menuOpen) {
@@ -326,74 +360,138 @@ fun GameScreen(
 // 局部组件
 // ================================================================
 
+/**
+ * 回合指示 + 局面信息。放在**左栏底部**。
+ *
+ * 它原来是一条横跨整屏的顶栏。之所以拆掉：通栏状态栏会从一个方形棋盘身上
+ * 直接切掉等高的那条面积（见主布局的注释）。信息一条没少，只是换了个位置。
+ */
 @Composable
-private fun TopBar(ui: GameUi) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+private fun TurnIndicator(ui: GameUi) {
+    val text = when {
+        ui.isOver -> "对局结束"
+        ui.thinking -> "黑猪大人正在想…"
+        ui.toMove == ui.playerColor -> "轮到黑猪勇士"
+        else -> "轮到黑猪大人"
+    }
+    val color = when {
+        ui.isOver -> TextSecondary
+        ui.thinking -> Warning
+        ui.toMove == ui.playerColor -> Accent
+        else -> AccentWarm
+    }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (!ui.isOver) {
+                StoneDot(isBlack = ui.toMove == Stone.BLACK, size = 24.dp)
+                Spacer(Modifier.width(8.dp))
+            }
+            // 20sp 是这条侧栏能容纳的最大字号：再大「黑猪大人正在想…」就会折行
+            Text(text = text, color = color, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(6.dp))
         Text(
             text = "${ui.boardSize} 路 · ${ui.difficulty.displayName}",
             color = TextSecondary,
+            fontSize = 19.sp,
         )
+        Spacer(Modifier.height(3.dp))
         Text(
-            text = "第 ${ui.moveCount} 手",
-            color = TextPrimary,
-        )
-        Text(
-            text = "悔棋剩余 ${ui.undoRemaining} 次",
-            color = if (ui.undoRemaining > 0) TextSecondary else TextDim,
+            text = "第 ${ui.moveCount} 手 · 悔棋 ${ui.undoRemaining}",
+            color = TextDim,
+            fontSize = 18.sp,
         )
     }
 }
 
 @Composable
 private fun PlayerPanel(
-    title: String,
-    isPlayer: Boolean,
+    name: String,
+    avatarRes: Int,
+    ringColor: Color,
+    stoneIsBlack: Boolean,
     captured: Int,
     isTurn: Boolean,
-    stoneColor: Color,
+    statusText: String?,
     modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(if (isTurn) SurfaceFocused else Surface)
+            .clip(RoundedCornerShape(22.dp))
+            .background(if (isTurn) SurfaceFocused else Surface.copy(alpha = 0.85f))
             .border(
-                width = if (isTurn) 3.dp else 1.dp,
-                color = if (isTurn) CursorRing else SurfaceBorder,
-                shape = RoundedCornerShape(14.dp),
+                width = if (isTurn) 4.dp else 2.dp,
+                color = if (isTurn) FocusRing else SurfaceBorder,
+                shape = RoundedCornerShape(22.dp),
             )
-            .padding(14.dp),
+            .padding(horizontal = 10.dp, vertical = 14.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
             modifier = Modifier
-                .size(46.dp)
+                .size(96.dp)
                 .clip(CircleShape)
-                .background(stoneColor)
-                .border(1.dp, SurfaceBorder, CircleShape),
-        )
+                .background(ringColor.copy(alpha = 0.20f))
+                .border(
+                    width = if (isTurn) 5.dp else 3.dp,
+                    color = if (isTurn) ringColor else ringColor.copy(alpha = 0.42f),
+                    shape = CircleShape,
+                )
+                .padding(4.dp),
+        ) {
+            Image(
+                painter = painterResource(avatarRes),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().clip(CircleShape),
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(text = name, color = TextPrimary, fontSize = 25.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            StoneDot(isBlack = stoneIsBlack, size = 26.dp)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = if (stoneIsBlack) "执黑" else "执白",
+                color = TextSecondary,
+                fontSize = 20.sp,
+            )
+        }
         Spacer(Modifier.height(10.dp))
-        Text(text = title, color = TextPrimary, fontWeight = FontWeight.Medium)
-        // 两侧都标出身份，孩子一眼能分清「哪个是我、哪个是黑猪大人」
-        Text(
-            text = if (isPlayer) "黑猪勇士" else "黑猪大人",
-            color = if (isPlayer) Accent else Warning,
-        )
-        Spacer(Modifier.height(10.dp))
-        Text(text = "提子 $captured", color = TextSecondary)
-        if (isTurn) {
-            Spacer(Modifier.height(6.dp))
-            Text(text = "该你了", color = CursorRing)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(text = "提子", color = TextDim, fontSize = 19.sp)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "$captured",
+                color = TextPrimary,
+                fontSize = 27.sp,
+                fontWeight = FontWeight.Black,
+            )
+        }
+        // 状态胶囊只在需要时出现（该你了 / 思考中），两侧面板高度差不影响观感
+        if (statusText != null) {
+            Spacer(Modifier.height(10.dp))
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(ringColor.copy(alpha = 0.22f))
+                    .padding(horizontal = 14.dp, vertical = 5.dp),
+            ) {
+                Text(
+                    text = statusText,
+                    color = ringColor,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
         }
     }
 }
 
+/** 操作提示 + 光标坐标。放在**右栏底部**。 */
 @Composable
-private fun BottomBar(ui: GameUi) {
+private fun HintBox(ui: GameUi) {
     val hint = when {
         ui.isOver -> "对局结束"
         ui.thinking -> "黑猪大人正在思考…"
@@ -408,67 +506,55 @@ private fun BottomBar(ui: GameUi) {
         ui.previewCapture > 0 -> Success
         else -> TextSecondary
     }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(color.copy(alpha = 0.14f))
+            .border(1.dp, color.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
+            .padding(horizontal = 12.dp, vertical = 9.dp),
     ) {
-        Text(text = hint, color = color)
+        Text(text = hint, color = color, fontSize = 19.sp)
+        Spacer(Modifier.height(5.dp))
         Text(
             text = "光标 ${ui.cursorX + 1},${ui.cursorY + 1}",
             color = TextDim,
+            fontSize = 18.sp,
         )
     }
 }
 
-/**
- * 放大镜：显示光标周围 5x5 区域。
- *
- * 电视视距 2-3 米，19 路棋盘上单颗棋子只有几十像素，靠眼睛判断
- * 「这里能不能下、提几子」很吃力。放大镜把关键局部放大，配合
- * 棋盘上的光标本体，构成双重确认。
- */
-@Composable
-private fun Magnifier(ui: GameUi, modifier: Modifier = Modifier) {
-    val size = ui.boardSize
-    val radius = 2
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(Surface.copy(alpha = 0.92f))
-            .border(1.dp, SurfaceBorder, RoundedCornerShape(12.dp))
-            .padding(12.dp),
-    ) {
-        Text(text = "放大镜", color = TextDim)
-        Spacer(Modifier.height(6.dp))
-        BoardCanvas(
-            boardSize = size,
-            cells = ui.cells,
-            lastMoveX = ui.lastMoveX,
-            lastMoveY = ui.lastMoveY,
-            cursorX = ui.cursorX,
-            cursorY = ui.cursorY,
-            cursorVisible = !ui.isOver,
-            previewCapture = ui.previewCapture,
-            previewIllegal = ui.previewIllegal,
-            previewColor = ui.playerColor,
-            hintX = if (ui.hintX < 0) -1 else ui.hintX,
-            hintY = if (ui.hintY < 0) -1 else ui.hintY,
-            modifier = Modifier.size(130.dp),
-        )
-    }
-}
-
+/** 「黑猪大人正在思考」的气泡。三个点轮流亮，让等待这件事有进度感。 */
 @Composable
 private fun ThinkingBadge(modifier: Modifier = Modifier) {
-    Box(
+    val transition = rememberInfiniteTransition(label = "thinking")
+    val phase by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 3f,
+        animationSpec = infiniteRepeatable(tween(1050, easing = LinearEasing)),
+        label = "phase",
+    )
+    val active = phase.toInt().coerceIn(0, 2)
+
+    Row(
         modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(Surface.copy(alpha = 0.94f))
-            .border(2.dp, Warning, RoundedCornerShape(20.dp))
-            .padding(horizontal = 28.dp, vertical = 14.dp),
+            .clip(RoundedCornerShape(22.dp))
+            .background(Surface.copy(alpha = 0.96f))
+            .border(3.dp, Warning, RoundedCornerShape(22.dp))
+            .padding(horizontal = 30.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(text = "黑猪大人正在思考…", color = Warning)
+        Text(text = "黑猪大人正在思考", color = Warning, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.width(10.dp))
+        repeat(3) { i ->
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 2.dp)
+                    .size(11.dp)
+                    .clip(CircleShape)
+                    .background(Warning.copy(alpha = if (i == active) 1f else 0.3f)),
+            )
+        }
     }
 }
 
@@ -476,12 +562,12 @@ private fun ThinkingBadge(modifier: Modifier = Modifier) {
 private fun ToastBanner(message: String, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(Surface.copy(alpha = 0.96f))
-            .border(1.dp, Accent, RoundedCornerShape(12.dp))
-            .padding(horizontal = 24.dp, vertical = 12.dp),
+            .clip(RoundedCornerShape(16.dp))
+            .background(Surface.copy(alpha = 0.97f))
+            .border(2.dp, Accent, RoundedCornerShape(16.dp))
+            .padding(horizontal = 26.dp, vertical = 13.dp),
     ) {
-        Text(text = message, color = TextPrimary)
+        Text(text = message, color = TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.Medium)
     }
 }
 
@@ -497,21 +583,26 @@ private fun PauseMenu(
     onExit: () -> Unit,
 ) {
     Box(
-        modifier = Modifier.fillMaxSize().background(Color(0xCC000000)),
+        modifier = Modifier.fillMaxSize().background(Scrim),
         contentAlignment = Alignment.Center,
     ) {
         Column(
             modifier = Modifier
                 // 固定宽度：第一版没限宽，菜单按钮 fillMaxWidth 直接把面板撑到满屏、左右贴边
-                .width(520.dp)
-                .clip(RoundedCornerShape(18.dp))
+                .width(560.dp)
+                .clip(RoundedCornerShape(26.dp))
                 .background(Surface)
-                .border(1.dp, SurfaceBorder, RoundedCornerShape(18.dp))
-                .padding(24.dp),
+                .border(2.dp, SurfaceBorder, RoundedCornerShape(26.dp))
+                .padding(22.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(text = "暂停", color = TextPrimary, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(18.dp))
+            Text(
+                text = "暂停",
+                color = TextPrimary,
+                fontSize = 34.sp,
+                fontWeight = FontWeight.Black,
+            )
+            Spacer(Modifier.height(14.dp))
             MenuButton("继续下棋", enabled = true, focused = selectedIndex == 0, onClick = onResume)
             MenuButton(
                 label = if (ui.undoRemaining > 0) "悔棋（还剩 ${ui.undoRemaining} 次）" else "悔棋（已用完）",
@@ -543,25 +634,26 @@ private fun MenuButton(
     val textColor = when {
         !enabled -> TextDim
         danger -> Danger
+        focused -> TextPrimary
         else -> TextPrimary
     }
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 5.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (focused) SurfaceFocused else Surface)
+            .padding(vertical = 4.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (focused) SurfaceFocused else Surface.copy(alpha = 0.6f))
             .border(
-                width = if (focused) 3.dp else 1.dp,
+                width = if (focused) 4.dp else 1.dp,
                 color = when {
-                    focused -> CursorRing
+                    focused -> FocusRing
                     danger -> Danger.copy(alpha = 0.5f)
                     else -> SurfaceBorder
                 },
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(16.dp),
             )
             .padding(horizontal = 22.dp, vertical = 12.dp),
     ) {
-        Text(text = label, color = textColor)
+        Text(text = label, color = textColor, fontSize = 24.sp, fontWeight = if (focused) FontWeight.Bold else FontWeight.Normal)
     }
 }

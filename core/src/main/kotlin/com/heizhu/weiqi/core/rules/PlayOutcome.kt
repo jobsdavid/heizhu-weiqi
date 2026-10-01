@@ -9,7 +9,16 @@ sealed interface PlayOutcome {
      * [captured] 是被提掉的点的扁平索引，可能为空数组。
      * 界面预览（`commit = false`）时同样会填充，用于显示「提 N 子」。
      */
-    class Ok(val captured: IntArray) : PlayOutcome {
+    class Ok(
+        val captured: IntArray,
+        /**
+         * 这手落下后，落子点所在棋块的气数。
+         *
+         * 棋盘层做自杀判定时**本来就要算这个数**，顺手回传给调用方不额外花时间。
+         * 根节点用它判断「是不是自杀式落子」（=1 气且没提到子）。
+         */
+        val ownLiberties: Int,
+    ) : PlayOutcome {
         val captureCount: Int get() = captured.size
     }
 

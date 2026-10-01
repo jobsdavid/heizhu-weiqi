@@ -42,11 +42,16 @@ fun AppRoot(vm: GameViewModel) {
             )
 
             Screen.SETUP -> NewGameScreen(
+                // 三项都沿用**上次实际用过的值**（首次运行是 9 路 · 入门 · 执黑）。
+                // 再配合页面把初始焦点放在「开始对局」上，孩子想连下几局同一个设置时，
+                // 进页面按一下 OK 就能开局。
                 initialSize = vm.settings.lastBoardSize,
-                // 默认「入门」而不是「初级」：孩子第一次上手要能赢，
-                // 建立信心比「有挑战」重要得多
-                initialDifficulty = Difficulty.ENTRY,
-                initialColor = Stone.BLACK,
+                initialDifficulty = Difficulty.fromId(vm.settings.lastDifficultyId),
+                initialColor = if (vm.settings.lastPlayerColorCode == Stone.WHITE.code.toInt()) {
+                    Stone.WHITE
+                } else {
+                    Stone.BLACK
+                },
                 onStart = { size, difficulty, color ->
                     vm.startNewGame(size, difficulty, color)
                 },
