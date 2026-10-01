@@ -72,6 +72,12 @@ fun BoardCanvas(
     hintX: Int,
     hintY: Int,
     modifier: Modifier = Modifier,
+    /** 最近一手被提掉的点（扁平索引）。用来画「被吃」的视觉反馈。 */
+    capturedPoints: IntArray = IntArray(0),
+    /** 被提一方的颜色。 */
+    capturedColor: Stone = Stone.EMPTY,
+    /** 动画触发键（传手数）。不能直接拿数组当 key —— 每次刷新都是新对象。 */
+    animationKey: Int = 0,
 ) {
     // 提示环的呼吸效果：静态高亮容易被忽略，闪烁才能抓住孩子视线
     val transition = rememberInfiniteTransition(label = "hint")
@@ -99,6 +105,21 @@ fun BoardCanvas(
             ripple.snapTo(0f)
             launch { dropScale.animateTo(1f, tween(200, easing = FastOutSlowInEasing)) }
             launch { ripple.animateTo(1f, tween(560)) }
+        }
+    }
+
+    // 提子特效：被提的子先原地缩小淡出，同时向外扩散一圈冲击环。
+    //
+    // 不加这个，提子就是「刷的一下没了」—— 真机上孩子会以为电脑根本没吃他的子。
+    //
+    // **时长 900ms 是实测定的，不是拍的**：第一版写的 560ms，
+    // 结果连我自己抓帧都抓不到（电视截图本身要 ~0.7 秒，比动画还长），
+    // 孩子的眼睛更追不上「刷一下」。900ms 足够看清，又不会拖慢落子节奏。
+    val captureAnim = remember { Animatable(1f) }
+    LaunchedEffect(animationKey) {
+        if (capturedPoints.isNotEmpty()) {
+            captureAnim.snapTo(0f)
+            captureAnim.animateTo(1f, tween(900, easing = FastOutSlowInEasing))
         }
     }
 
@@ -222,6 +243,29 @@ fun BoardCanvas(
             val isLast = index == lastIndex
             val r = if (isLast) stoneRadius * dropScale.value else stoneRadius
             drawGlossyStone(center = center, radius = r, isBlack = code == 1)
+        }
+
+        // ---------- 提子特效 ----------
+        if (capturedPoints.isNotEmpty() && captureAnim.value < 1f) {
+            val t = captureAnim.value
+            val ghost = if (capturedColor == Stone.BLACK) StoneBlack else StoneWhite
+            for (p in capturedPoints) {
+                if (p < 0 || p >= cells.size) continue
+                val center = Offset(cx(p % n), cy(p / n))
+                // 幽灵子：从原大小缩到 0.4 倍并淡出
+                drawCircle(
+                    color = ghost.copy(alpha = (1f - t) * 0.95f),
+                    radius = stoneRadius * (1f - 0.6f * t),
+                    center = center,
+                )
+                // 冲击环：向外扩散
+                drawCircle(
+                    color = LastMoveMark.copy(alpha = (1f - t) * 0.85f),
+                    radius = stoneRadius * (0.7f + 1.7f * t),
+                    center = center,
+                    style = Stroke(width = (step * 0.10f).coerceAtLeast(2f)),
+                )
+            }
         }
 
         // ---------- 最后一手：涟漪 + 暖橙点 ----------

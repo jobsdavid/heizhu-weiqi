@@ -5,7 +5,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
-import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performKeyInput
@@ -126,11 +126,19 @@ class TvScreenLayoutTest {
         rule.waitForIdle()
     }
 
-    /** 断言「焦点落在包含某段文字的那个可聚焦单元上」。 */
+    /**
+     * 断言「焦点落在包含某段文字的那个可聚焦单元上」。
+     *
+     * ⚠️ 必须用 `isFocused()`（比**值**），不能用
+     * `keyIsDefined(SemanticsProperties.Focused)` ——
+     * 后者匹配的是「所有可聚焦节点」（未聚焦时该属性也存在，值为 false），
+     * 于是查询永远命中树里的第一个可聚焦节点。我在这上面翻过一次车：
+     * 焦点其实一步都没动，却被宽松的容差判成了通过。
+     */
     private fun assertFocusedOn(insideText: String) {
         rule.waitForIdle()
         val inner = rule.onNodeWithText(insideText).fetchSemanticsNode().boundsInRoot.center
-        val focused = rule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.Focused))
+        val focused = rule.onAllNodes(isFocused())
             .fetchSemanticsNodes()
             .map { it.boundsInRoot }
             .firstOrNull { it.contains(inner) }
@@ -282,6 +290,93 @@ class TvScreenLayoutTest {
     // ============================================================
     // 焦点行为
     // ============================================================
+
+    /**
+     * 回归用例：设置页的三个选项行必须**竖排**。
+     *
+     * 曾经的 bug：「音效」和「落子振动」并排 → 用户想按右键挪到右边那个开关，
+     * 而左右键被选项行自己吃掉了（用来改值），于是**够不到落子振动**，
+     * 看起来就像「这个设置根本无法修改」。
+     *
+     * 判据：三个标题的 y 区间必须严格递增、互不重叠（并排才会重叠）。
+     */
+    @Test
+    fun `设置-三个选项行必须竖排而不是并排`() {
+        val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
+        render { SettingsScreen(SettingsStore(ctx), {}) }
+        rule.waitForIdle()
+
+        val rows = listOf("音效", "落子振动", "光标移动速度").map {
+            it to rule.onNodeWithText(it).fetchSemanticsNode().boundsInRoot
+        }
+        for (i in 0 until rows.size - 1) {
+            val (t1, r1) = rows[i]
+            val (t2, r2) = rows[i + 1]
+            assertTrue(
+                "「$t1」$r1 与「$t2」$r2 是并排的 —— 并排时用户会按左右键去够它，" +
+                    "而左右键是改值的，结果就是「够不到、设置不了」",
+                r2.top >= r1.bottom - 1f,
+            )
+        }
+        println("  设置页三个选项行 y 区间：${
+            rows.joinToString(" / ") { "${it.first}=${it.second.top.toInt()}..${it.second.bottom.toInt()}" }
+        }")
+    }
+
+    /**
+     * 回归用例：上下键必须能依次走到每一行、最后到「返回主菜单」。
+     *
+     * ⚠️ 不能用 `onNodeWithText("开")` 定位 —— 「音效」和「落子振动」的芯片都是 开/关，
+     * 文字重名会让匹配到多个节点。改成**把按键发给当前获得焦点的节点**，
+     * 再用几何关系判断焦点落在哪一行。
+     */
+    @Test
+    fun `设置-上下键能走到每一个选项行与返回按钮`() {
+        val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
+        render { SettingsScreen(SettingsStore(ctx), {}) }
+        rule.waitForIdle()
+
+        assertFocusedRowIs("音效")            // 初始焦点在第一行
+        pressOnFocused(Key.DirectionDown)
+        assertFocusedRowIs("落子振动")        // ← 用户报「设置不了」的就是这一行
+        pressOnFocused(Key.DirectionDown)
+        assertFocusedRowIs("光标移动速度")
+        pressOnFocused(Key.DirectionDown)
+        assertFocusedRowIs("返回主菜单")
+        pressOnFocused(Key.DirectionUp)
+        assertFocusedRowIs("光标移动速度")
+    }
+
+    /** 把按键发给**当前获得焦点的节点**（文字重名时没法用文字定位）。 */
+    private fun pressOnFocused(key: Key) {
+        rule.onNode(isFocused()).performKeyInput {
+            keyDown(key)
+            keyUp(key)
+        }
+        rule.waitForIdle()
+    }
+
+    /**
+     * 断言「焦点在标题为 [title] 的那一行」。
+     *
+     * 用几何关系判断：焦点盒与标题的 x 区间重叠，且纵向紧邻（行：标题在盒上方；
+     * 按钮：文字在盒内部）。用文字定位不行 —— 选项芯片文字会重名。
+     */
+    private fun assertFocusedRowIs(title: String) {
+        val f = focusedRowBounds() ?: error("没有任何节点获得焦点")
+        val t = rule.onNodeWithText(title).fetchSemanticsNode().boundsInRoot
+        val xOverlap = f.left < t.right && f.right > t.left
+        // 容差 100px：行间距约 200px，容差再大就会把「焦点没动」判成通过
+        val yNear = kotlin.math.abs(f.top - t.top) < 100f
+        assertTrue(
+            "期望焦点在「$title」那一行：标题 $t，焦点盒 $f（x 重叠=$xOverlap y 邻近=$yNear）",
+            xOverlap && yNear,
+        )
+    }
+
+    /** 取当前获得焦点的那个单元的包围盒（用 isFocused 比值，见 assertFocusedOn 注释）。 */
+    private fun focusedRowBounds(): Rect? =
+        rule.onAllNodes(isFocused()).fetchSemanticsNodes().firstOrNull()?.boundsInRoot
 
     @Test
     fun `新对局-初始焦点在开始对局上`() {

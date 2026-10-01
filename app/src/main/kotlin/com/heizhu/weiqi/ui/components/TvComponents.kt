@@ -516,11 +516,19 @@ fun TvButton(
  * 一整行是**一个焦点单元**：左右键换值，不用先把焦点对准第几个选项。
  * 对小孩的心智负担小很多 —— 他只需要记住「这一行是干什么的」。
  *
- * ## 高度是硬指标
- * 这一行被裁切过一次：第三行在 1080p 上被压扁成 16px，选项与说明直接消失，
- * 孩子根本改不了执棋颜色。所以在保证可读的前提下把纵向开销压到最小：
- * 标题 22sp + 选项行 44dp + 说明 20sp，整行约 106dp。
- * **改动这里的任何 padding 都要重新跑一遍 1080p 的溢出检查（见 verify-on-emulator.sh）。**
+ * ## 行高是硬指标（改任何 padding 前先读完这段）
+ *
+ * 这一行被压扁过**三次**：
+ *  - 「新对局」第三行 → 16px，选项与说明直接消失，孩子改不了执棋颜色
+ *  - 「设置」第三行 → 38px
+ *  - 「历史战绩」按难度第 5 行 → 0px，整行消失
+ *
+ * 1080p 只有 540dp 可用高度，放不下时 Compose **静默压扁、不报错**。
+ * 所以这里的纵向 padding 都取最小可读值（选项行 5dp、芯片 6dp、说明间距 3dp），
+ * 让「设置页竖排三行」能塞进约 770px 的预算里（三行各约 234px + 两个 10dp 间距）。
+ *
+ * **改这里的任何 padding 都必须重跑 `gradle :app:testDebugUnitTest`** ——
+ * 本机 UI 测试会逐页量每个文字节点的高度，6 秒就能告诉你有没有压扁。
  */
 @Composable
 fun <T> TvOptionRow(
@@ -533,6 +541,14 @@ fun <T> TvOptionRow(
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
     accent: Color = Accent,
+    /**
+     * 说明文字放在**标题同一行**（右侧）而不是另起一行。
+     *
+     * 用途：一页要竖排好几行时，每行省掉一整行文字的高度。
+     * 「设置」页三行竖排在 1080p 上刚好差 30px 塞不下，用这个开关就宽裕了
+     * —— 信息一条没少，只是换了个位置。
+     */
+    inlineDescription: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
 
@@ -541,7 +557,10 @@ fun <T> TvOptionRow(
             Text(
                 text = title,
                 color = if (focused) accent else TextSecondary,
-                fontSize = 22.sp,
+                fontSize = 21.sp,
+                // 显式给行高：中文字体的**默认行高**远大于字号
+                // （21sp 实测占掉 65px 高），不写死这里，三行竖排就永远差几十像素
+                lineHeight = 26.sp,
                 fontWeight = if (focused) FontWeight.Bold else FontWeight.Medium,
             )
             if (focused) {
@@ -553,6 +572,20 @@ fun <T> TvOptionRow(
                         .clip(RoundedCornerShape(2.dp))
                         .background(accent),
                 )
+            }
+            if (inlineDescription) {
+                val inlineDesc = descriptionOf(options[selectedIndex])
+                if (inlineDesc != null) {
+                    Spacer(Modifier.width(16.dp))
+                    Text(
+                        text = inlineDesc,
+                        color = if (focused) TextSecondary else TextDim,
+                        fontSize = 19.sp,
+                        lineHeight = 24.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
         Spacer(Modifier.height(6.dp))
@@ -581,7 +614,7 @@ fun <T> TvOptionRow(
                         else -> false
                     }
                 }
-                .padding(horizontal = 8.dp, vertical = 7.dp),
+                .padding(horizontal = 8.dp, vertical = 5.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -597,7 +630,7 @@ fun <T> TvOptionRow(
                                 SurfaceAlt.copy(alpha = 0.75f)
                             },
                         )
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                        .padding(horizontal = 14.dp, vertical = 5.dp),
                 ) {
                     Text(
                         text = labelOf(option),
@@ -614,12 +647,13 @@ fun <T> TvOptionRow(
             }
         }
         val desc = descriptionOf(options[selectedIndex])
-        if (desc != null) {
-            Spacer(Modifier.height(5.dp))
+        if (desc != null && !inlineDescription) {
+            Spacer(Modifier.height(3.dp))
             Text(
                 text = desc,
                 color = if (focused) TextSecondary else TextDim,
                 fontSize = 20.sp,
+                lineHeight = 25.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )

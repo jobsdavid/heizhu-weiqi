@@ -52,6 +52,86 @@ class AllDifficultyLevelsTest {
         }
     }
 
+    /**
+     * 属性测试：**只要盘上存在能提子的着法，就必须提。**
+     *
+     * 来源：黑猪大人反馈「9 路中级，AI 有子都不吃」。
+     * 单元测试只测我手写的那一个棋形，会漏掉「某些具体形状下规则不生效」这一类问题，
+     * 所以这里改为在**大量随机局面**上验证这条性质。
+     */
+    @Test
+    fun `随机局面里只要有子可提就必须提`() {
+        for (d in Difficulty.entries) {
+            var opportunities = 0
+            var missed = 0
+            for (seed in 1..8) {
+                val rng = Random(seed * 7919L)
+                val b = Board(9)
+                var color = Stone.BLACK
+                // 随机铺子，双方交替、只落合法点
+                repeat(14 + rng.nextInt(18)) {
+                    val empties = (0 until 81).filter { b.cells[it].toInt() == 0 }
+                    for (c in empties.shuffled(rng).take(8)) {
+                        if (b.play(c % 9, c / 9, color) is PlayOutcome.Ok) break
+                    }
+                    color = color.opponent
+                }
+
+                // 光随机铺子几乎碰不到提子机会（实测 8 个局面只有 1 个），
+                // 得**主动构造打吃**：找一颗孤子，把它四邻中的三个填上对方颜色，
+                // 目标方下一手就能提它。
+                val target = Stone.BLACK
+                repeat(3) {
+                    val empties = (0 until 81).filter { b.cells[it].toInt() == 0 }
+                    for (p in empties.shuffled(rng)) {
+                        val px = p % 9
+                        val py = p / 9
+                        val nbs = listOfNotNull(
+                            (px - 1 to py).takeIf { px > 0 },
+                            (px + 1 to py).takeIf { px < 8 },
+                            (px to py - 1).takeIf { py > 0 },
+                            (px to py + 1).takeIf { py < 8 },
+                        )
+                        if (nbs.size < 4) continue
+                        if (nbs.any { b.cells[it.second * 9 + it.first].toInt() != 0 }) continue
+                        if (b.play(px, py, target) !is PlayOutcome.Ok) continue
+                        var filled = 0
+                        for ((nx, ny) in nbs) {
+                            if (filled == 3) break
+                            val opponent = target.opponent
+                            if (b.play(nx, ny, opponent) is PlayOutcome.Ok) filled++
+                        }
+                        if (filled == 3) break
+                    }
+                }
+                color = target.opponent
+
+                // 这一方现在有哪些着法能提子
+                val capturing = (0 until 81).filter { i ->
+                    val out = b.preview(i % 9, i / 9, color)
+                    out is PlayOutcome.Ok && out.captureCount > 0
+                }
+                if (capturing.isEmpty()) continue
+                opportunities++
+
+                val move = pick(9, b, color, d, seed)
+                if (move !in capturing) {
+                    missed++
+                    if (missed == 1) {
+                        println("  ✘ ${d.displayName} 漏提：可提着法 $capturing，实际选了 $move")
+                        println(b.toString().lines().joinToString("\n") { "      $it" })
+                    }
+                }
+            }
+            println("  ${d.displayName}: 有提子机会的局面 $opportunities 个，漏提 $missed 个")
+            assertEquals(
+                "${d.displayName} 档在有提子机会时没提（漏 $missed / $opportunities）",
+                0,
+                missed,
+            )
+        }
+    }
+
     @Test
     fun `五档-空盘第一手都不在一线`() {
         for (d in Difficulty.entries) {

@@ -65,6 +65,15 @@ data class GameUi(
     val result: GameResult? = null,
     /** 一次性提示消息（如「悔棋次数已用完」），显示后由界面清除 */
     val toast: String? = null,
+    /**
+     * 最近一手被提掉的点（扁平索引），用于**提子特效**。
+     *
+     * 为什么要单独存：引擎那条路径只回传提子数（`MoveOutcome.Ok` 里没有点表），
+     * 而「刷的一下就没了」孩子根本看不清 —— 实测会被误解成「电脑没吃我的子」。
+     */
+    val lastCapturedPoints: IntArray = IntArray(0),
+    /** 被提的那一方的颜色（用于画幽灵子）。[lastCapturedPoints] 为空时无意义。 */
+    val lastCapturedColor: Stone = Stone.EMPTY,
 )
 
 /**
@@ -391,8 +400,29 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
         val previous = _ui.value
         val last = state.board.lastMove
 
+        // 提子特效要知道「刚才哪些子被提了、是什么颜色」。
+        val captured = diffCaptured(previous.cells, state.board.cells)
+        val capturedIdx = captured.first
+        val capturedCode = captured.second
+
+        if (capturedIdx.isNotEmpty()) {
+            // 埋点：提子数据链路的可观测性。真机上用 `adb logcat -s WeiqiCapture` 看，
+            // 用来确认「确实提子了、特效数据也传下去了」——不埋点就只能靠肉眼猜。
+            Log.d(
+                "WeiqiCapture",
+                "提子 ${capturedIdx.size} 个，颜色码=$capturedCode，" +
+                    "位置=${capturedIdx.joinToString(",")}",
+            )
+        }
+
         _ui.value = previous.copy(
             cells = state.board.cells.copyOf(),
+            lastCapturedPoints = capturedIdx,
+            lastCapturedColor = when (capturedCode) {
+                1 -> Stone.BLACK
+                2 -> Stone.WHITE
+                else -> Stone.EMPTY
+            },
             lastMoveX = last.x,
             lastMoveY = last.y,
             toMove = state.toMove,
@@ -406,6 +436,30 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
             hintX = -1,
             hintY = -1,
         ).withPreview(computePreview(previous.cursorX, previous.cursorY))
+    }
+
+    /**
+     * 前后对盘，求出这一手被提掉的点与被提一方的颜色码。
+     *
+     * 为什么要这么算：引擎那条路径只回传**提子数**（`MoveOutcome.Ok` 里没有点表），
+     * 而提子特效需要知道具体哪些点，才能画出「被吃」的反馈。
+     * 19 路也才 361 字节，代价可忽略。
+     *
+     * 注意：悔棋时是「子重新出现」而不是消失，所以返回空 —— 不会误触发特效。
+     *
+     * @return (被提点的扁平索引, 被提一方的颜色码 1=黑 2=白；无提子时点为 0)
+     */
+    internal fun diffCaptured(before: ByteArray, after: ByteArray): Pair<IntArray, Int> {
+        if (before.size != after.size) return IntArray(0) to 0
+        val idx = ArrayList<Int>(8)
+        var code = 0
+        for (i in after.indices) {
+            if (before[i].toInt() != 0 && after[i].toInt() == 0) {
+                idx.add(i)
+                code = before[i].toInt()
+            }
+        }
+        return idx.toIntArray() to code
     }
 
     private fun onGameFinished() {

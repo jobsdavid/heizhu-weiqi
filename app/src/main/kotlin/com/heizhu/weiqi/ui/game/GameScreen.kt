@@ -306,6 +306,11 @@ fun GameScreen(
                     previewColor = ui.playerColor,
                     hintX = ui.hintX,
                     hintY = ui.hintY,
+                    capturedPoints = ui.lastCapturedPoints,
+                    capturedColor = ui.lastCapturedColor,
+                    // 动画触发键用「手数」：IntArray 每次刷新都是新对象，
+                    // 直接用它当 key 会让动画每帧重新开始
+                    animationKey = ui.moveCount,
                     // 直接占满盒子：BoardCanvas 内部按「最短边」算格距并居中，
                     // 给满约束 = 它能画出的最大棋盘。
                     modifier = Modifier.fillMaxSize(),
