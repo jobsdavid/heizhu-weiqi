@@ -172,7 +172,12 @@ private fun genmove(t: List<String>): String {
     val board = parseBoard(size, spec)
     val cap = tvPlayoutCap(diff)
     val engine = MctsEngine(size, net = loadNet())
-    val move = runBlocking { engine.findBestMove(board, color, diff, Random(seed), cap) }
+    // 可选：用环境变量覆盖「AI 最长思考时间」（对应 app 设置里那一项）。
+    // 有了它才能**实测**那个设置是否真的改变搜索量 —— 否则只能在电视上靠感觉。
+    val budgetMs = System.getenv("WEIQI_THINK_MS")?.toLongOrNull()
+    val move = runBlocking {
+        engine.findBestMove(board, color, diff, Random(seed), cap, timeBudgetOverrideMs = budgetMs)
+    }
     return if (move < 0) "pass" else "${move % size},${move / size}"
 }
 

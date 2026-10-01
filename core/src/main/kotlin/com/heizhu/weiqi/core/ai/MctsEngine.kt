@@ -251,10 +251,24 @@ class MctsEngine(
         val deadline = startedAt + budgetMs
         val rootEval = net.evaluate(board.cells, color.code)
 
+        // 候选池大小随预算伸缩 —— **这是「AI 最长思考时间」设置唯一真正的作用点**。
+        //
+        // 实测发现的问题：候选数（netTopK）和前瞻层数（netPlies）原来都按档位写死，
+        // 一手在电视上约 6 秒就算完了 —— 用户把「最长思考时间」设成 15/20/25/30 秒，
+        // 多出来的时间**完全没用上**，那个设置就是个摆设（设置项注释里写的
+        // "用满的方式是加深前瞻"描述的是一个还没实现的行为）。
+        //
+        // 修法：预算每超过该档自带预算一档，候选池就跟着放宽一档。
+        // 因为下面的评估循环本来就在截止时间退出，"池子变大"必然转化为"搜得更宽"，
+        // 而不是空转；时间没给够也不会硬凑（想清楚就提前收工，这是"最长"的语义）。
+        // 上限 3 倍：既要让慢档真正用上预算，也不能让低难度档把孩子晾在那儿。
+        val widen = (budgetMs.toDouble() / difficulty.timeBudgetMs.coerceAtLeast(1))
+            .coerceIn(1.0, 3.0)
+        val poolSize = (difficulty.netTopK * widen).toInt().coerceAtLeast(difficulty.netTopK)
         val byPolicy = (0 until cellCount)
             .filter { board.cells[it].toInt() == 0 && rootEval.policy[it] > 0f }
             .sortedByDescending { rootEval.policy[it] }
-            .take(difficulty.netTopK)
+            .take(poolSize)
 
         val candidates = ArrayList<Int>(byPolicy.size + NET_HEURISTIC_TAIL)
         candidates.addAll(byPolicy)
