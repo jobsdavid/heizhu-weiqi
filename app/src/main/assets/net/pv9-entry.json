@@ -5,7 +5,7 @@
   {
    "name": "stem.w",
    "shape": [
-    64,
+    16,
     3,
     3,
     3
@@ -15,162 +15,60 @@
   {
    "name": "stem.b",
    "shape": [
-    64
+    16
    ],
-   "offset": 1728
+   "offset": 432
   },
   {
    "name": "block0.c1.w",
    "shape": [
-    64,
-    64,
+    16,
+    16,
     3,
     3
    ],
-   "offset": 1792
+   "offset": 448
   },
   {
    "name": "block0.c1.b",
    "shape": [
-    64
+    16
    ],
-   "offset": 38656
+   "offset": 2752
   },
   {
    "name": "block0.c2.w",
    "shape": [
-    64,
-    64,
+    16,
+    16,
     3,
     3
    ],
-   "offset": 38720
+   "offset": 2768
   },
   {
    "name": "block0.c2.b",
    "shape": [
-    64
+    16
    ],
-   "offset": 75584
-  },
-  {
-   "name": "block1.c1.w",
-   "shape": [
-    64,
-    64,
-    3,
-    3
-   ],
-   "offset": 75648
-  },
-  {
-   "name": "block1.c1.b",
-   "shape": [
-    64
-   ],
-   "offset": 112512
-  },
-  {
-   "name": "block1.c2.w",
-   "shape": [
-    64,
-    64,
-    3,
-    3
-   ],
-   "offset": 112576
-  },
-  {
-   "name": "block1.c2.b",
-   "shape": [
-    64
-   ],
-   "offset": 149440
-  },
-  {
-   "name": "block2.c1.w",
-   "shape": [
-    64,
-    64,
-    3,
-    3
-   ],
-   "offset": 149504
-  },
-  {
-   "name": "block2.c1.b",
-   "shape": [
-    64
-   ],
-   "offset": 186368
-  },
-  {
-   "name": "block2.c2.w",
-   "shape": [
-    64,
-    64,
-    3,
-    3
-   ],
-   "offset": 186432
-  },
-  {
-   "name": "block2.c2.b",
-   "shape": [
-    64
-   ],
-   "offset": 223296
-  },
-  {
-   "name": "block3.c1.w",
-   "shape": [
-    64,
-    64,
-    3,
-    3
-   ],
-   "offset": 223360
-  },
-  {
-   "name": "block3.c1.b",
-   "shape": [
-    64
-   ],
-   "offset": 260224
-  },
-  {
-   "name": "block3.c2.w",
-   "shape": [
-    64,
-    64,
-    3,
-    3
-   ],
-   "offset": 260288
-  },
-  {
-   "name": "block3.c2.b",
-   "shape": [
-    64
-   ],
-   "offset": 297152
+   "offset": 5072
   },
   {
    "name": "pconv.w",
    "shape": [
     16,
-    64,
+    16,
     1,
     1
    ],
-   "offset": 297216
+   "offset": 5088
   },
   {
    "name": "pconv.b",
    "shape": [
     16
    ],
-   "offset": 298240
+   "offset": 5344
   },
   {
    "name": "pout.w",
@@ -180,31 +78,31 @@
     1,
     1
    ],
-   "offset": 298256
+   "offset": 5360
   },
   {
    "name": "pout.b",
    "shape": [
     1
    ],
-   "offset": 298272
+   "offset": 5376
   },
   {
    "name": "vconv.w",
    "shape": [
     8,
-    64,
+    16,
     1,
     1
    ],
-   "offset": 298273
+   "offset": 5377
   },
   {
    "name": "vconv.b",
    "shape": [
     8
    ],
-   "offset": 298785
+   "offset": 5505
   },
   {
    "name": "vfc1.w",
@@ -212,14 +110,14 @@
     64,
     648
    ],
-   "offset": 298793
+   "offset": 5513
   },
   {
    "name": "vfc1.b",
    "shape": [
     64
    ],
-   "offset": 340265
+   "offset": 46985
   },
   {
    "name": "vfc2.w",
@@ -227,17 +125,17 @@
     1,
     64
    ],
-   "offset": 340329
+   "offset": 47049
   },
   {
    "name": "vfc2.b",
    "shape": [
     1
    ],
-   "offset": 340393
+   "offset": 47113
   }
  ],
- "bytes": 1361576,
+ "bytes": 188456,
  "value_scale": 10.0,
- "k_winrate": 0.2188383011226025
+ "k_winrate": 0.21588196805794968
 }

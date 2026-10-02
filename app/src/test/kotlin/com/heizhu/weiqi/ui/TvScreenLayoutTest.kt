@@ -413,9 +413,12 @@ class TvScreenLayoutTest {
         assertFocusedOn("入门")
         tapKey("入门", Key.DirectionUp)          // → 棋盘大小
         assertFocusedOn("9 路")
-        // 左右键在这一行改值，焦点应留在本行（值 9 路 → 13 路）
+        // 左右键在这一行改值；**当前只开放 9 路**（13/19 等有了权重再开，见 HomeScreen），
+        // 所以按右键时值不变、焦点必须留在本行 —— 这正是要守的：方向键不能把焦点顶出去。
         tapKey("9 路", Key.DirectionRight)
-        assertFocusedOn("13 路")
+        assertFocusedOn("9 路")
+        tapKey("9 路", Key.DirectionLeft)
+        assertFocusedOn("9 路")
     }
 
     @Test

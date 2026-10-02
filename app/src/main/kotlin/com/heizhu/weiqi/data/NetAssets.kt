@@ -33,7 +33,24 @@ import java.util.concurrent.ConcurrentHashMap
 object NetAssets {
 
     private const val TAG = "WeiqiNet"
-    private val cache = ConcurrentHashMap<String, PolicyValueNet?>()
+
+    /**
+     * 已加载的权重缓存。
+     *
+     * ⚠️ 值类型**不能是 nullable** —— 虽然写成 `PolicyValueNet?` 编译器不拦，
+     * 但底层 `java.util.concurrent.ConcurrentHashMap` 在**运行时**拒绝 null 值（抛 NPE）。
+     * "没有网络"这种情况用 [absent] 单独记（见 [load] 的注释：
+     * 这个坑曾让"选 13 路开局"直接崩掉应用）。
+     */
+    private val cache = ConcurrentHashMap<String, PolicyValueNet>()
+
+    /**
+     * 已知**该尺寸/档位没有权重**的 key。
+     *
+     * 作用有两个：① 避免每次开局都去读一遍 assets 再失败；② 让"没有网络"这件事
+     * 不经过 [cache]（见其注释）。
+     */
+    private val absent = ConcurrentHashMap.newKeySet<String>()
 
     /** assets 里各尺寸的权重前缀。没有条目 = 该尺寸没有网络。 */
     private fun baseName(boardSize: Int): String? = when (boardSize) {
@@ -45,17 +62,38 @@ object NetAssets {
      * 取该尺寸 + 该难度档的网络；没有可用网络时返回 null（调用方据此回退旧路径）。
      *
      * @param difficultyId 难度档 id（如 `master`）。先找 `net/pv9-<id>`，找不到退通用权重。
+     *
+     * ⚠️ **缺失不能用 null 记进 [cache]** —— `ConcurrentHashMap` 不允许 null 值，
+     *    `cache[key] = null` 会抛 NPE。13 路 / 19 路本来就没有权重（只有 9 路的），
+     *    于是"选 13 路开局"直接崩、应用退出（真机实测栈：
+     *    `NetAssets.load(NetAssets.kt:58) → GameViewModel.startNewGame`）。
+     *    缺失单独记在 [absent] 里，既避免重复读 assets，也不会踩这个坑。
      */
-    fun load(context: Context, boardSize: Int, difficultyId: String): PolicyValueNet? {
+    fun load(context: Context, boardSize: Int, difficultyId: String): PolicyValueNet? =
+        load(boardSize, difficultyId) { base -> loadOne(context, base) }
+
+    /**
+     * [load] 的实现，但**权重怎么来由调用方给** —— 这样"没有权重时必须回退而不是崩"
+     * 这条路径可以在**纯 JVM** 上直接测（不需要 Context，也就不会踩 Robolectric
+     * 在这台机器上起不来的问题，见 SKILL §13.4）。
+     * 真机事故复现路径：`load(13, "master") { null }` —— 旧实现在这里把 null 写进
+     * `ConcurrentHashMap` 直接 NPE（"选 13 路 → 应用退出"）。
+     */
+    internal fun load(
+        boardSize: Int,
+        difficultyId: String,
+        loadOne: (String) -> PolicyValueNet?,
+    ): PolicyValueNet? {
         val key = "$boardSize:$difficultyId"
-        if (cache.containsKey(key)) return cache[key]
+        cache[key]?.let { return it }
+        if (absent.contains(key)) return null
         val base = baseName(boardSize)
         val net = if (base == null) {
             null
         } else {
-            loadOne(context, "$base-$difficultyId") ?: loadOne(context, base)
+            loadOne("$base-$difficultyId") ?: loadOne(base)
         }
-        cache[key] = net
+        if (net != null) cache[key] = net else absent.add(key)
         return net
     }
 
