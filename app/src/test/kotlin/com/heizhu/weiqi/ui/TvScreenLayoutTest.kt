@@ -501,23 +501,29 @@ class TvScreenLayoutTest {
         }
         rule.waitForIdle()
 
-        // ① 人类该走：左侧（人类）面板显示执黑 + 该你了；不得出现 AI 侧的任何状态。
+        // ① 玩家（黑猪勇士）该走：玩家面板在**右栏**、显示「执白」+「该你了」；
+        //    不得出现 AI 侧的任何状态。
+        // ⚠️ 身份约定（2026-10-02 统一，与设置页/首页/结果页的文案一致）：
+        //    **黑猪大人 = AI 对手**，**黑猪勇士 = 玩的人**。
+        //    这条用例之前锁的是相反的模型（"人类 = 黑猪大人"），于是它在替错误行为背书 ——
+        //    真机上孩子选黑棋后，"黑猪大人"那块面板反而显示黑棋，就是被它盖住的。
         // 方位用**相对比较**，不写死像素 —— boundsInRoot 是像素（1920×1080），
-        // 拿 dp 去比会得到假失败（我第一版就写错了单位）。
-        assertTrue("人类执白时「执白」必须在左栏（人类面板）",
-            boxOf("执白").left < boxOf("执黑").left)
-        rule.onNodeWithText("轮到黑猪大人").assertExists()
+        // 拿 dp 去比会得到假失败（第一版就写错了单位）。
+        assertTrue("玩家执白时「执白」必须在右栏（玩家面板）",
+            boxOf("执白").left > boxOf("执黑").left)
+        rule.onNodeWithText("轮到黑猪勇士").assertExists()
         rule.onNodeWithText("该你了").assertExists()
-        rule.onNodeWithText("轮到黑猪勇士").assertDoesNotExist()
+        rule.onNodeWithText("轮到黑猪大人").assertDoesNotExist()
         rule.onNodeWithText("思考中…").assertDoesNotExist()
 
-        // ② AI 该走且正在思考：右侧面板显示思考中；界面上不该再出现「该你了」
+        // ② AI（黑猪大人）该走且正在思考：AI 面板（左）显示「思考中…」，回合条显示「正在想…」；
+        //    界面上不该再出现「该你了」（那是跟孩子说话，而现在是机器在走）
         ui = sampleUi(9).copy(toMove = Stone.BLACK, thinking = true)
         rule.waitForIdle()
         rule.onNodeWithText("思考中…").assertExists()
         rule.onNodeWithText("正在想…").assertExists()
         rule.onNodeWithText("该你了").assertDoesNotExist()
-        rule.onNodeWithText("轮到黑猪大人").assertDoesNotExist()
+        rule.onNodeWithText("轮到黑猪勇士").assertDoesNotExist()
     }
 
     /**

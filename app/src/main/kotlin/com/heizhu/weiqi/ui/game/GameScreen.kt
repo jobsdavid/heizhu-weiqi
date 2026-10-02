@@ -393,21 +393,25 @@ fun GameScreen(
                     Text(text = "总用时 $totalText", color = TextDim, fontSize = 19.sp)
                 }
                 Spacer(Modifier.weight(1f))
-                // ⚠️ 绑定的语义，别再弄反了（这一处曾经整体错位，用户会直接看到
-                //    "自己执黑却显示执白、自己的思考时间显示在对手面板上"）：
-                //     · `ui.playerColor` / `playerCaptured` / `playerThinkLive` = **人类（黑猪大人）**
-                //       —— 证据：提示功能用 `state.playerColor` 搜索，提示文案是
-                //       "黑猪大人觉得这里可以停一手"（GameViewModel 第 363/371 行）。
-                //     · `aiColor` / `aiCaptured` / `bossThinkLive` = **AI（黑猪勇士）**。
+                // ⚠️ 身份约定（2026-10-02 修正；这一处之前**整体弄反**，真机上被黑猪大人当场抓到）：
+                //     · **黑猪大人 = AI 对手**。证据是应用自己的文案：
+                //       设置页 `InfoRow("对手", "黑猪大人（本机 AI）")`、首页"和黑猪大人下棋"、
+                //       对局中的"黑猪大人正在思考…"、"黑猪大人停了一手"（AI 停手时）。
+                //     · **黑猪勇士 = 玩的人**（孩子）。所以首屏那行「黑猪勇士执什么颜色」
+                //       选的就是玩家的颜色（内部字段名 `playerColor`）—— 那行文案是对的。
+                //     之前把 AI 的面板（大人）绑到了玩家数据上 ⇒ 孩子选黑棋后，
+                //     "黑猪大人"那块显示成黑棋，看起来像选项反了。
                 PlayerPanel(
                     name = "黑猪大人",
                     avatarRes = R.drawable.avatar_boss,
                     ringColor = AccentWarm,
-                    stoneIsBlack = ui.playerColor == Stone.BLACK,
-                    captured = playerCaptured,
-                    thinkMs = playerThinkLive,
-                    isTurn = !ui.isOver && ui.toMove == ui.playerColor,
-                    statusText = if (!ui.isOver && ui.toMove == ui.playerColor) "该你了" else null,
+                    // AI 那一侧：颜色 / 提子 / 用时（ViewModel 里 `boss*` 就是 AI）
+                    stoneIsBlack = aiIsBlack,
+                    captured = aiCaptured,
+                    thinkMs = bossThinkLive,
+                    isTurn = !ui.isOver && ui.toMove == aiColor,
+                    // AI 那一侧不能写「该你了」——那是跟机器说话。它在想就说在想。
+                    statusText = if (ui.thinking) "思考中…" else null,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.weight(1f))
@@ -462,12 +466,12 @@ fun GameScreen(
                     name = "黑猪勇士",
                     avatarRes = R.drawable.avatar_warrior,
                     ringColor = Accent,
-                    stoneIsBlack = aiIsBlack,
-                    captured = aiCaptured,
-                    thinkMs = bossThinkLive,
-                    isTurn = !ui.isOver && ui.toMove == aiColor,
-                    // AI 那一侧不能写「该你了」——那是跟机器说话。它在想就说在想。
-                    statusText = if (ui.thinking) "思考中…" else null,
+                    // 玩家那一侧（孩子）：颜色 / 提子 / 用时
+                    stoneIsBlack = ui.playerColor == Stone.BLACK,
+                    captured = playerCaptured,
+                    thinkMs = playerThinkLive,
+                    isTurn = !ui.isOver && ui.toMove == ui.playerColor,
+                    statusText = if (!ui.isOver && ui.toMove == ui.playerColor) "该你了" else null,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.weight(1f))
@@ -532,16 +536,19 @@ private fun TurnIndicator(ui: GameUi) {
         // （减去棋子圆点 24dp + 间距 8dp 后只剩约 7 字宽）会折成两行，
         // 整列高度一变，上面的左侧面板就被推着跳（实测 79px）。
         ui.thinking -> "正在想…"
-        // ⚠️ `ui.playerColor` = **人类（黑猪大人）**，`aiColor` = AI（黑猪勇士）。
-        // 这里曾经整条反过来：人类该走时显示"轮到黑猪勇士"，用户在自己面板上看到的是对手的信息。
-        ui.toMove == ui.playerColor -> "轮到黑猪大人"
-        else -> "轮到黑猪勇士"
+        // ⚠️ 身份：`ui.playerColor` = **玩家（黑猪勇士）**，`aiColor` = **AI（黑猪大人）**。
+        // 2026-10-02 按应用自己的文案统一了这套约定（设置页"对手 · 黑猪大人（本机 AI）"、
+        // 首页"和黑猪大人下棋"、"黑猪大人正在思考…"）；此处与两块面板的绑定必须一致，
+        // 否则就会出现"面板写着大人、提示条写着勇士"的自相矛盾。
+        ui.toMove == ui.playerColor -> "轮到黑猪勇士"
+        else -> "轮到黑猪大人"
     }
     val color = when {
         ui.isOver -> TextSecondary
         ui.thinking -> Warning
-        ui.toMove == ui.playerColor -> AccentWarm
-        else -> Accent
+        // 颜色跟着"该谁走"走：玩家面板的描边是 Accent，AI 面板的是 AccentWarm
+        ui.toMove == ui.playerColor -> Accent
+        else -> AccentWarm
     }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Row(verticalAlignment = Alignment.CenterVertically) {
