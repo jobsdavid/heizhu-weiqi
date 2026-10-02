@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class NetAssetsFallbackTest {
 
-    /** 13/19 路：连加载都不该尝试，直接回退（旧实现在这里崩）。 */
+    /** 13/19 路：有前缀（pv13/pv19）但 assets 里没有对应权重 → 必须回退而不是崩。 */
     @Test
     fun `没有权重的尺寸必须回退而不是崩溃`() {
         for (size in listOf(13, 19)) {
@@ -30,9 +30,12 @@ class NetAssetsFallbackTest {
             val loader: (String) -> PolicyValueNet? = { calls.incrementAndGet(); null }
             assertNull("${size} 路没有权重，应当返回 null 让引擎回退随机 rollout",
                 NetAssets.load(size, "master", loader))
+            assertEquals("${size} 路应当试过「档位权重」和「通用权重」两条路",
+                2, calls.get())
+            // 第二次必须也稳 —— "缓存缺失"这条路径正是当初的崩溃点（null 进了容器）
             assertNull("${size} 路再取一次也必须稳定回退（缺失要记在 absent，不能塞进 cache）",
                 NetAssets.load(size, "master", loader))
-            assertEquals("${size} 路根本没有权重前缀，不该去尝试加载", 0, calls.get())
+            assertEquals("${size} 路缺失应当被记住，第二次不再重复读 assets", 2, calls.get())
         }
     }
 

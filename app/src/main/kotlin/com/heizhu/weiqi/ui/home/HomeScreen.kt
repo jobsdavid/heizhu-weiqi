@@ -42,6 +42,7 @@ import com.heizhu.weiqi.R
 import com.heizhu.weiqi.core.ai.Difficulty
 import com.heizhu.weiqi.core.rules.Stone
 import com.heizhu.weiqi.data.GameRecord
+import com.heizhu.weiqi.data.NetAssets
 import com.heizhu.weiqi.data.StatsCalculator
 import com.heizhu.weiqi.ui.components.SectionCard
 import com.heizhu.weiqi.ui.components.StatTile
@@ -296,12 +297,11 @@ fun NewGameScreen(
     onStart: (boardSize: Int, difficulty: Difficulty, playerColor: Stone) -> Unit,
     onBack: () -> Unit,
 ) {
-    // ⚠️ 目前**只开放 9 路**：13 路 / 19 路没有对应尺寸的蒸馏权重，引擎会退化成
-    // 随机 rollout 路径（棋力很差、难度阶梯也不适用），而且曾经因为"没有权重"这件事
-    // 被塞进 ConcurrentHashMap 而直接崩掉应用（见 NetAssets.load 的注释）。
-    // 等 13/19 的权重训练出来再打开这两档 —— 解开下面这行注释即可，
-    // 下面的 `descriptionOf` 里已经留好了它们的文案。
-    val sizes = remember { listOf(9) }   // 原本是 listOf(9, 13, 19)
+    // 可选尺寸**只有一个来源**：NetAssets.supportedSizes。
+    // 界面永远不该列出"没有对应权重"的尺寸 —— 13 路就是因为这个直接崩过应用
+    // （见 NetAssets.load 的注释）。13/19 的权重训好放进 assets 后，
+    // 只需改 NetAssets.supportedSizes 这一行，界面自动跟着开放。
+    val sizes = remember { NetAssets.supportedSizes }
     var sizeIndex by remember { mutableStateOf(sizes.indexOf(initialSize).coerceAtLeast(0)) }
     var diffIndex by remember {
         mutableStateOf(Difficulty.entries.indexOf(initialDifficulty).coerceAtLeast(0))

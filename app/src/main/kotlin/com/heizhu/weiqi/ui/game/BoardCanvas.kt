@@ -2,6 +2,7 @@ package com.heizhu.weiqi.ui.game
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -108,18 +109,18 @@ fun BoardCanvas(
         }
     }
 
-    // 提子特效：被提的子先原地缩小淡出，同时向外扩散一圈冲击环。
+    // 提子特效：**先闪 1 秒 → 再淡出 1 秒**（共 2 秒）。
     //
-    // 不加这个，提子就是「刷的一下没了」—— 真机上孩子会以为电脑根本没吃他的子。
-    //
-    // **时长 900ms 是实测定的，不是拍的**：第一版写的 560ms，
-    // 结果连我自己抓帧都抓不到（电视截图本身要 ~0.7 秒，比动画还长），
-    // 孩子的眼睛更追不上「刷一下」。900ms 足够看清，又不会拖慢落子节奏。
+    // 时长是用户定的，不是拍的：第一版 560ms 连抓帧都抓不到（电视截图本身要 ~0.7 秒），
+    // 改成 900ms 后仍有反馈"太快了，能闪一秒然后在一秒淡出吗" ——
+    // 所以现在是**两段节奏**：先让"这里被吃了"被看见（闪），再看它消失（淡出）。
+    // 时长常量与相位计算抽在 [captureEffectFrame]（纯函数，有 JVM 用例守着，
+    // 谁再把它改短会红）。
     val captureAnim = remember { Animatable(1f) }
     LaunchedEffect(animationKey) {
         if (capturedPoints.isNotEmpty()) {
             captureAnim.snapTo(0f)
-            captureAnim.animateTo(1f, tween(900, easing = FastOutSlowInEasing))
+            captureAnim.animateTo(1f, tween(CAPTURE_FLASH_MS + CAPTURE_FADE_MS, easing = LinearEasing))
         }
     }
 
@@ -245,26 +246,33 @@ fun BoardCanvas(
             drawGlossyStone(center = center, radius = r, isBlack = code == 1)
         }
 
-        // ---------- 提子特效 ----------
-        if (capturedPoints.isNotEmpty() && captureAnim.value < 1f) {
-            val t = captureAnim.value
-            val ghost = if (capturedColor == Stone.BLACK) StoneBlack else StoneWhite
-            for (p in capturedPoints) {
-                if (p < 0 || p >= cells.size) continue
-                val center = Offset(cx(p % n), cy(p / n))
-                // 幽灵子：从原大小缩到 0.4 倍并淡出
-                drawCircle(
-                    color = ghost.copy(alpha = (1f - t) * 0.95f),
-                    radius = stoneRadius * (1f - 0.6f * t),
-                    center = center,
-                )
-                // 冲击环：向外扩散
-                drawCircle(
-                    color = LastMoveMark.copy(alpha = (1f - t) * 0.85f),
-                    radius = stoneRadius * (0.7f + 1.7f * t),
-                    center = center,
-                    style = Stroke(width = (step * 0.10f).coerceAtLeast(2f)),
-                )
+        // ---------- 提子特效（闪 1 秒 → 淡出 1 秒）----------
+        if (capturedPoints.isNotEmpty()) {
+            val elapsed = (captureAnim.value * (CAPTURE_FLASH_MS + CAPTURE_FADE_MS)).toLong()
+            val frame = captureEffectFrame(elapsed)
+            if (frame.ghostAlpha > 0f || frame.ringAlpha > 0f) {
+                val ghost = if (capturedColor == Stone.BLACK) StoneBlack else StoneWhite
+                for (p in capturedPoints) {
+                    if (p < 0 || p >= cells.size) continue
+                    val center = Offset(cx(p % n), cy(p / n))
+                    // 幽灵子：第一段原地闪烁，第二段缩小淡出
+                    if (frame.ghostAlpha > 0f) {
+                        drawCircle(
+                            color = ghost.copy(alpha = frame.ghostAlpha),
+                            radius = stoneRadius * frame.ghostScale,
+                            center = center,
+                        )
+                    }
+                    // 冲击环：跟着一起闪 / 向外散开
+                    if (frame.ringAlpha > 0f) {
+                        drawCircle(
+                            color = LastMoveMark.copy(alpha = frame.ringAlpha),
+                            radius = stoneRadius * frame.ringScale,
+                            center = center,
+                            style = Stroke(width = (step * 0.10f).coerceAtLeast(2f)),
+                        )
+                    }
+                }
             }
         }
 
@@ -361,4 +369,60 @@ fun BoardCanvas(
             }
         }
     }
+}
+
+// ===============================================================
+// 提子特效的时长与相位（抽成纯函数，便于在 JVM 上直接测）
+// ===============================================================
+
+/** 提子特效第一段：**闪**这么久 —— 让"这里被吃了"先被看见。 */
+internal const val CAPTURE_FLASH_MS = 1000
+
+/** 提子特效第二段：**淡出**这么久 —— 幽灵子缩小变淡、冲击环向外散开。 */
+internal const val CAPTURE_FADE_MS = 1000
+
+/** 闪烁周期：亮/暗交替的间隔（越小闪得越快）。 */
+private const val CAPTURE_BLINK_PERIOD_MS = 120L
+
+/** 提子特效某一时刻要画的参数。`Alpha` 为 0 表示这一帧不画那种元素。 */
+internal data class CaptureEffectFrame(
+    /** 幽灵子（被提的子留下的残影）不透明度 */
+    val ghostAlpha: Float,
+    /** 幽灵子半径系数（1 = 原大小） */
+    val ghostScale: Float,
+    /** 冲击环不透明度 */
+    val ringAlpha: Float,
+    /** 冲击环半径系数 */
+    val ringScale: Float,
+)
+
+/**
+ * 提子特效在第 [elapsedMs] 毫秒时的画面参数。
+ *
+ * **两段节奏（用户定）**：先闪 [CAPTURE_FLASH_MS]，再淡出 [CAPTURE_FADE_MS]。
+ * 为什么抽成纯函数：这个特效因为"太快"被反馈过两次（560ms → 900ms → 现在的 1+1 秒），
+ * 而时长藏在一个 `tween(900)` 里没人能测。现在 `CaptureEffectTimingTest` 守着它 ——
+ * 谁再把时长改短，用例会红。
+ */
+internal fun captureEffectFrame(elapsedMs: Long): CaptureEffectFrame {
+    if (elapsedMs < 0 || elapsedMs >= CAPTURE_FLASH_MS + CAPTURE_FADE_MS) {
+        return CaptureEffectFrame(ghostAlpha = 0f, ghostScale = 1f, ringAlpha = 0f, ringScale = 1f)
+    }
+    if (elapsedMs < CAPTURE_FLASH_MS) {
+        // 第一段：原地、原大小地闪（亮/暗交替）
+        val on = (elapsedMs / CAPTURE_BLINK_PERIOD_MS) % 2 == 0L
+        return if (on) {
+            CaptureEffectFrame(ghostAlpha = 0.95f, ghostScale = 1f, ringAlpha = 0.90f, ringScale = 1.25f)
+        } else {
+            CaptureEffectFrame(ghostAlpha = 0.12f, ghostScale = 1f, ringAlpha = 0f, ringScale = 1.05f)
+        }
+    }
+    // 第二段：接着"闪完"的样子缩小 + 淡出，冲击环向外散开
+    val f = (elapsedMs - CAPTURE_FLASH_MS).toFloat() / CAPTURE_FADE_MS
+    return CaptureEffectFrame(
+        ghostAlpha = (1f - f) * 0.95f,
+        ghostScale = 1f - 0.6f * f,
+        ringAlpha = (1f - f) * 0.85f,
+        ringScale = 0.7f + 1.7f * f,
+    )
 }

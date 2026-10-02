@@ -55,8 +55,22 @@ object NetAssets {
     /** assets 里各尺寸的权重前缀。没有条目 = 该尺寸没有网络。 */
     private fun baseName(boardSize: Int): String? = when (boardSize) {
         9 -> "net/pv9"
+        13 -> "net/pv13"
+        19 -> "net/pv19"
         else -> null
     }
+
+    /**
+     * **首屏「棋盘大小」可选的尺寸 —— 单一来源。**
+     *
+     * 为什么放在这里而不是写死在界面里：界面只能列"真的有对应权重"的尺寸，
+     * 否则孩子一选就掉进"没有网络"的回退路径（13 路曾经因此直接崩掉应用）。
+     * 某个尺寸的权重练好、装进 `assets/net/` 之后，**只改这一行**即可开放它。
+     *
+     * 现状：只有 9 路有蒸馏权重；13 / 19 路的权重在训练中，练好并放进 assets 后
+     * 把这里改成 `listOf(9, 13, 19)`（[baseName] 已经预留好 pv13 / pv19 的前缀）。
+     */
+    val supportedSizes: List<Int> = listOf(9)
 
     /**
      * 取该尺寸 + 该难度档的网络；没有可用网络时返回 null（调用方据此回退旧路径）。
