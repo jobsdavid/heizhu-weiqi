@@ -14,7 +14,7 @@ import java.io.File
 import java.security.MessageDigest
 
 /**
- * 五档网络装配的闸门（纯 JVM，不依赖 Robolectric）。
+ * 网络装配的闸门（纯 JVM，不依赖 Robolectric）。覆盖**所有放行的棋盘尺寸**。
  *
  * 难度阶梯**完全靠「每档一份不同强弱的权重」实现**（见 NetAssets 类注释）。
  * 这套装配有四种静默失效 —— 都不会报错、不会崩、编译与运行全绿，
@@ -25,6 +25,10 @@ import java.security.MessageDigest
  *     阶梯静默塌掉一节 —— 最坏的一种，用户看不出任何异常；
  *  3. **权重与 manifest 不配套**（换了 .bin 没换 .json）→ 加载抛异常被吞掉，同样只剩回退；
  *  4. **manifest 的层偏移与权重长度对不上**（导出脚本只改了一半）→ 同上。
+ *
+ * 尺寸清单**从 [NetAssets.supportedSizes] 取**，不在测试里另抄一份：
+ * 界面上能选的尺寸 = 真的有全套权重、且这组用例过得去的尺寸。抄一份的结果就是
+ * 「代码放行了 13 路，用例还在只查 9 路」——今天已经因为「同一事实写两份」栽过三次。
  *
  * 为什么不用 Robolectric 走 `Assets.open`：本机 JDK 上 Robolectric 与
  * raw FileDescriptor 不兼容（`Failed to interact with raw FileDescriptor internals`），
@@ -44,8 +48,10 @@ class NetAssetsTest {
             )
     }
 
-    private fun bin(tier: String) = File(netDir, "pv9-$tier.bin")
-    private fun manifest(tier: String) = File(netDir, "pv9-$tier.json")
+    private val sizes: List<Int> get() = NetAssets.supportedSizes
+
+    private fun bin(size: Int, tier: String) = File(netDir, "pv$size-$tier.bin")
+    private fun manifest(size: Int, tier: String) = File(netDir, "pv$size-$tier.json")
 
     private fun md5(f: File): String =
         MessageDigest.getInstance("MD5").digest(f.readBytes()).joinToString("") { "%02x".format(it) }
@@ -72,44 +78,55 @@ class NetAssetsTest {
     }
 
     @Test
-    fun `五档都能经生产代码加载出网络`() {
-        for (d in Difficulty.entries) {
-            val net = PolicyValueNet.load(manifest(d.id).readText(), bin(d.id).readBytes())
-            assertTrue("档位 ${d.id} 加载出的网络尺寸不对", net.size == 9)
+    fun `每个放行尺寸的每一档都能经生产代码加载出网络`() {
+        assertTrue("放行的尺寸不许为空", sizes.isNotEmpty())
+        for (s in sizes) {
+            for (d in Difficulty.entries) {
+                val net = PolicyValueNet.load(manifest(s, d.id).readText(), bin(s, d.id).readBytes())
+                assertTrue("${s} 路 · 档位 ${d.id} 加载出的网络尺寸不对", net.size == s)
+            }
         }
     }
 
     @Test
     fun `权重与清单配套且长度自洽`() {
-        for (d in Difficulty.entries) {
-            val b = bin(d.id)
-            val m = manifest(d.id)
-            assertTrue("档位 ${d.id} 缺权重：${b.path}", b.isFile)
-            assertTrue("档位 ${d.id} 缺清单：${m.path}", m.isFile)
+        for (s in sizes) {
+            for (d in Difficulty.entries) {
+                val b = bin(s, d.id)
+                val m = manifest(s, d.id)
+                assertTrue("${s} 路 · 档位 ${d.id} 缺权重：${b.path}", b.isFile)
+                assertTrue("${s} 路 · 档位 ${d.id} 缺清单：${m.path}", m.isFile)
 
-            val json = m.readText()
-            val declared = Json.parseToJsonElement(json).jsonObject["bytes"]!!.jsonPrimitive.content.toLong()
-            assertEquals("${m.name} 声明的 bytes 与实际权重长度不符 —— 装了错的 .json", b.length(), declared)
-            assertEquals(
-                "${m.name} 的层偏移加起来不等于权重长度 —— 导出脚本只改了一半",
-                b.length(),
-                coveredBytes(json),
-            )
+                val json = m.readText()
+                val declared = Json.parseToJsonElement(json).jsonObject["bytes"]!!.jsonPrimitive.content.toLong()
+                assertEquals(
+                    "${m.name} 声明的 bytes 与实际权重长度不符 —— 装了错的 .json",
+                    b.length(),
+                    declared,
+                )
+                assertEquals(
+                    "${m.name} 的层偏移加起来不等于权重长度 —— 导出脚本只改了一半",
+                    b.length(),
+                    coveredBytes(json),
+                )
+            }
         }
     }
 
     @Test
-    fun `五档用的确实是五份不同的权重`() {
-        val digests = Difficulty.entries.map { it.id to md5(bin(it.id)) }
-        println("  权重指纹： " + digests.joinToString("  ") { "${it.first}=${it.second.take(8)}" })
-        for (i in digests.indices) {
-            for (j in i + 1 until digests.size) {
-                assertNotEquals(
-                    "「${digests[i].first}」和「${digests[j].first}」装配了同一份权重 —— " +
-                        "两档强弱会完全相同，阶梯静默塌掉一节，而界面上看不出任何异常",
-                    digests[i].second,
-                    digests[j].second,
-                )
+    fun `同一尺寸内五档用的确实是五份不同的权重`() {
+        for (s in sizes) {
+            val digests = Difficulty.entries.map { it.id to md5(bin(s, it.id)) }
+            println("  ${s} 路权重指纹： " + digests.joinToString("  ") { "${it.first}=${it.second.take(8)}" })
+            for (i in digests.indices) {
+                for (j in i + 1 until digests.size) {
+                    assertNotEquals(
+                        "${s} 路：「${digests[i].first}」和「${digests[j].first}」装配了同一份权重 —— " +
+                            "两档强弱会完全相同，阶梯静默塌掉一节，而界面上看不出任何异常",
+                        digests[i].second,
+                        digests[j].second,
+                    )
+                }
             }
         }
     }
