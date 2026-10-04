@@ -74,7 +74,7 @@ fun ResultScreen(
     val score = result.score
     // 认输是**终局**，围棋里不结算。更要命的是数子算法有一条已知简化：
     // 只接触单色的空区归该色 —— 盘上若只剩一方的棋子，整盘都会被判给它。
-    // 实测：认输在第 1 手时，结果页会显示「黑棋 361 子、黑棋领先 361 子」。
+    // 实测：认输在第 1 手时，结果页会显示「黑棋 169 子、黑棋领先 169 子」。
     // 所以认输局一概不显示比分。
     val resigned = result.reason == EndReason.RESIGN
     val headline = when (result.playerWon) {

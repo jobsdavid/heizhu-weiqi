@@ -240,9 +240,9 @@ class TvScreenLayoutTest {
     }
 
     @Test
-    fun `对局页-布局检查-19路`() {
-        render { GameScreen(sampleUi(19), CursorSpeed.NORMAL, { _, _ -> }, {}, {}, {}, {}, {}, {}, {}, {}, {}) }
-        assertLayoutSane("对局页·19路")
+    fun `对局页-布局检查-13路`() {
+        render { GameScreen(sampleUi(13), CursorSpeed.NORMAL, { _, _ -> }, {}, {}, {}, {}, {}, {}, {}, {}, {}) }
+        assertLayoutSane("对局页·13路")
     }
 
     @Test

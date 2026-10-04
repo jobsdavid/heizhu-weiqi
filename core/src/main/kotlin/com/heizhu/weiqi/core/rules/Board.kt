@@ -236,7 +236,7 @@ class Board(val size: Int) {
      *
      * MCTS 每个 playout 开头都会调用它来把棋盘重置回根局面。
      * 相比每次 `copy()` 新建对象，能省下 GroupFinder 三个 int 数组的分配
-     * （19 路约 4.3 KB/次），在每秒上万次 playout 的量级下差别显著。
+     * （大盘每次几 KB），在每秒上万次 playout 的量级下差别显著。
      */
     fun copyFrom(other: Board) {
         require(other.size == size) { "棋盘尺寸不一致：$size vs ${other.size}" }
@@ -260,7 +260,7 @@ class Board(val size: Int) {
      * 从快照恢复棋盘状态，供对局悔棋使用。
      *
      * 只接受**裸数据**而非整个 Board 对象，是为了让调用方能存下轻量快照
-     * （一次悔棋要回退两手，19 路对局最多可能存几百份快照，不能每份都带
+     * （一次悔棋要回退两手，一盘对局最多可能存几百份快照，不能每份都带
      * 一套 GroupFinder 缓冲区）。
      */
     fun restoreFrom(

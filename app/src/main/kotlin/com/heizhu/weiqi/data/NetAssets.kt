@@ -56,7 +56,6 @@ object NetAssets {
     private fun baseName(boardSize: Int): String? = when (boardSize) {
         9 -> "net/pv9"
         13 -> "net/pv13"
-        19 -> "net/pv19"
         else -> null
     }
 
@@ -68,8 +67,6 @@ object NetAssets {
      * 某个尺寸的权重练好、装进 `assets/net/` 之后，**只改这一行**即可开放它。
      *
      * 现状：**9 路 / 13 路**有全套五档权重。
-     * 19 路暂不放行（它的五档阶梯还没验通）——
-     * 它的语料与十份网络已生成并放在 tools/katago/ 下，等档位验通再装进来。
      * 开放某个尺寸 = 装好权重 + 改这一行 + 过 [NetAssetsTest]：
      * 每个放行尺寸的每一档都要有配套权重与清单、能被生产代码加载、且五档互不相同。
      */
@@ -81,7 +78,7 @@ object NetAssets {
      * @param difficultyId 难度档 id（如 `master`）。先找 `net/pv9-<id>`，找不到退通用权重。
      *
      * ⚠️ **缺失不能用 null 记进 [cache]** —— `ConcurrentHashMap` 不允许 null 值，
-     *    `cache[key] = null` 会抛 NPE。13 路 / 19 路本来就没有权重（只有 9 路的），
+     *    `cache[key] = null` 会抛 NPE。13 路那时还没有权重（只有 9 路的），
      *    于是"选 13 路开局"直接崩、应用退出（真机实测栈：
      *    `NetAssets.load(NetAssets.kt:58) → GameViewModel.startNewGame`）。
      *    缺失单独记在 [absent] 里，既避免重复读 assets，也不会踩这个坑。

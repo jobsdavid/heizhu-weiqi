@@ -352,7 +352,7 @@ private fun RecordRow(record: GameRecord) {
             }
             Text(
                 // 认输局不数子（见 ResultScreen 注释），存档里的比分是无意义的，
-                // 所以这里也不能显示 —— 否则历史列表里会出现「黑 361 : 0 白」
+                // 所以这里也不能显示 —— 否则历史列表里会出现「黑 169 : 0 白」
                 text = if (record.endedByResign) {
                     "${record.moveCount} 手 · 中盘认输"
                 } else {

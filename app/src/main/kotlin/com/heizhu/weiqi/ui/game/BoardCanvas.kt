@@ -45,7 +45,7 @@ import com.heizhu.weiqi.ui.theme.WoodMid
 import kotlinx.coroutines.launch
 
 /**
- * 围棋棋盘。用手绘 Canvas 而不是堆组件 —— 19 路有 361 个交叉点，
+ * 围棋棋盘。用手绘 Canvas 而不是堆组件 —— 13 路有 169 个交叉点，
  * 每个点做成一个 composable 会直接把重组开销拉满。
  *
  * 绘制顺序（从下到上）：
@@ -88,7 +88,7 @@ fun BoardCanvas(
         animationSpec = infiniteRepeatable(tween(650), RepeatMode.Reverse),
         label = "hintAlpha",
     )
-    // 光标本体的呼吸：让孩子在 19 路盘上一眼锁定光标
+    // 光标本体的呼吸：让孩子在密集的盘面上一眼锁定光标
     val cursorPulse by transition.animateFloat(
         initialValue = 0.9f,
         targetValue = 1.12f,

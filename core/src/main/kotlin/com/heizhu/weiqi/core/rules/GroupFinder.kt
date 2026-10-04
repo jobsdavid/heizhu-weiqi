@@ -6,7 +6,7 @@ package com.heizhu.weiqi.core.rules
  * 三个设计要点：
  *
  * 1. **迭代式 flood fill，绝不用递归**。
- *    19 路最长单色链可达 180 子，递归深度足够在某些设备上触发 StackOverflow。
+ *    一条长链可达上百子，递归深度足够在某些设备上触发 StackOverflow。
  *
  * 2. **用递增 stamp 代替每次清零 visited 数组**。
  *    清零是 O(点数)，而 playout 每秒要做上万次，累加起来很可观。

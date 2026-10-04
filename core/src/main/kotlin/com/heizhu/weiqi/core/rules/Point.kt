@@ -16,7 +16,7 @@ data class Point(val x: Int, val y: Int) {
     fun toIndex(size: Int): Int = y * size + x
 
     /**
-     * 转为围棋习惯坐标（如 19 路的 D4）。
+     * 转为围棋习惯坐标（如 D4）。
      *
      * 列用字母 A-T（跳过 I，这是围棋界为了区别于数字 1 的传统）。
      * 行号从下往上数，最下一线为 1。棋盘尺寸不同时行号起点也不同

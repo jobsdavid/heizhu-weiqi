@@ -10,7 +10,7 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * 回归闸门：**没有权重的棋盘尺寸必须回退，不能崩**。
  *
- * 真机事故（2026-10-02）：只有 9 路有蒸馏权重，13/19 路没有 —— 而 [NetAssets] 旧实现
+ * 真机事故（2026-10-02）：那时只有 9 路有蒸馏权重，13 路还没有 —— 而 [NetAssets] 旧实现
  * 把"没有网络"这件事用 **null 写进了 `ConcurrentHashMap`**，它在**运行时**拒绝 null 值，
  * 直接抛 NPE。表现是"在电视上选 13 路 → 应用退出"。
  * 编译期看不出来：缓存字段当时就声明成 `PolicyValueNet?`，编译器不会拦。
@@ -22,10 +22,10 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class NetAssetsFallbackTest {
 
-    /** 13/19 路：有前缀（pv13/pv19）但 assets 里没有对应权重 → 必须回退而不是崩。 */
+    /** 有前缀（如 pv13）但 assets 里没有对应权重 → 必须回退而不是崩。 */
     @Test
     fun `没有权重的尺寸必须回退而不是崩溃`() {
-        for (size in listOf(13, 19)) {
+        for (size in listOf(9, 13)) {
             val calls = AtomicInteger()
             val loader: (String) -> PolicyValueNet? = { calls.incrementAndGet(); null }
             assertNull("${size} 路没有权重，应当返回 null 让引擎回退随机 rollout",
