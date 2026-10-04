@@ -347,7 +347,10 @@ class GameState(
             score = score,
             moveCount = _moves.size,
             undoCount = undoCount,
-            durationMs = System.currentTimeMillis() - startedAt,
+            // 用注入的 clock，不要用 System.currentTimeMillis()：
+            // 全类只该有一套计时口径，否则注入假时钟的测试在终局这条路径上会读到真实墙钟
+            //（时长变成天文数字），是典型的「测了一半」的坑。
+            durationMs = clock() - startedAt,
             reason = EndReason.RESIGN,
         )
         isOver = true
@@ -367,7 +370,7 @@ class GameState(
             score = score,
             moveCount = _moves.size,
             undoCount = undoCount,
-            durationMs = System.currentTimeMillis() - startedAt,
+            durationMs = clock() - startedAt,     // 同 [resign]：只保留一套计时口径
             reason = EndReason.SCORED,
         )
         isOver = true
@@ -388,7 +391,7 @@ class GameState(
         /** 表示停一手的着法索引 */
         const val PASS_INDEX = -1
 
-        /** 每局默认悔棋次数上限（黑猪大人 2026-10-01 决定） */
+        /** 每局默认悔棋次数上限：够孩子容错，又不至于让悔棋退化成无限重下 */
         const val DEFAULT_MAX_UNDO = 5
     }
 }
