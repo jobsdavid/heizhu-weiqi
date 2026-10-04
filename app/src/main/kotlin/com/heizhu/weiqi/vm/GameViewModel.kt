@@ -638,9 +638,4 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
         cancelThinking()
         soundPlayer.release()
     }
-
-    companion object {
-        /** 各尺寸棋盘支持的选择器选项 */
-        val BOARD_SIZES = listOf(9, 13, 19)
-    }
 }

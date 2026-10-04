@@ -65,7 +65,20 @@ class RecordStore(private val file: File) {
 
     private suspend fun writeToDisk(records: List<GameRecord>) = withContext(Dispatchers.IO) {
         file.parentFile?.mkdirs()
-        file.writeText(json.encodeToString(serializer, records))
+        val text = json.encodeToString(serializer, records)
+        // **原子写**：先写同目录的临时文件，再 rename 覆盖。
+        //
+        // 直接 file.writeText(...) 时，进程被杀 / 断电 / 存储写满都会留下**截断的 JSON**，
+        // 而读取端遇到解析失败会判定「存档损坏」→ 改名 .corrupt → **从空战绩继续**
+        // （等于孩子攒下的历史一夜清空）。同目录 rename 是原子的：读取端要么看到旧内容、
+        // 要么看到新内容，不存在"看到半个文件"的窗口。
+        val tmp = File(file.parentFile, file.name + ".tmp")
+        tmp.writeText(text)
+        if (!tmp.renameTo(file)) {
+            // rename 失败（极少见：目标被占用等）时退回直接写，至少不让这一局的记录丢掉
+            file.writeText(text)
+            tmp.delete()
+        }
     }
 }
 

@@ -96,7 +96,11 @@ fun HistoryScreen(
         }
     }
     val bySize = remember(records) {
-        StatsCalculator.byBoardSize(records, listOf(9, 13, 19))
+        // 尺寸分组**按记录里实际出现过的尺寸**算，不硬编码一份清单：
+        // 硬编码的那份（曾经写的是 9/13/19）与「哪些尺寸能玩」是两回事 ——
+        // 它既会把没玩过的尺寸列成空组，又会在开放/撤下某个尺寸时静默对不上。
+        // 能玩哪些尺寸的唯一来源是 NetAssets.supportedSizes（首页选择器读的就是它）。
+        StatsCalculator.byBoardSize(records, records.map { it.boardSize }.distinct().sorted())
     }
 
     val pageFocus = remember { FocusRequester() }

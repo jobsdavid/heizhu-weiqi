@@ -9,9 +9,11 @@
 
 ## 功能
 
-- **人机 / 双人对局**，9 / 13 / 19 路可选
-- **五档 AI 难度**（入门 / 初级 / 中级 / 高级 / 大师），自研 MCTS 引擎，
-  会提子、打劫、避免一线爬、填眼、能判断「没有有用的一手」并停手收工
+- **人机对局**（单机单人），**9 路 / 13 路**可选。19 路的语料与网络已训好但档位未验通，暂不放行
+- **五档 AI 难度**（入门 / 初级 / 中级 / 高级 / 大师）：自研 MCTS 引擎 + **端侧蒸馏小网络**
+  （纯 Kotlin 手写前向，不引 ONNX/TFLite）。难度阶梯靠**每档配一个不同强弱的网络**实现
+  （弱网 = 入门、最强网 = 大师），而不是让强 AI 随机放水 —— 放水会下出怪棋形，还教坏孩子
+- MCTS 会提子、打劫、避免一线爬、填眼、能判断「没有有用的一手」并停手收工
 - **完整围棋规则**：提子、打劫、禁自杀、眼、停一手、数子定胜负
 - **悔棋**：菜单里直接悔，返回键悔棋会先弹确认框（防误碰把刚下的一手撤掉）
 - **提子在棋盘上可见**：落子点光标环、最后一手标记、提子动画与音效
@@ -23,7 +25,10 @@
 ## 架构
 
 ```
-core/   纯 Kotlin，无 Android 依赖。规则引擎 + MCTS AI，可独立跑测试
+core/   纯 Kotlin，无 Android 依赖。规则引擎 + MCTS AI + 端侧网络前向，可独立跑测试
+bench/  纯 JVM 命令行「棋力评测台」：stdin 收局面 → stdout 回一手（JSON 行协议），
+        Python 侧据此驱动本引擎与 KataGo 互殴、打分。刻意不做 GTP 协议 ——
+        评测只需要「给局面、要一手」这一件事，多一套协议只会多一个与棋力无关的失败点
 app/    Compose for TV 界面、本地 JSON 存档、音效
 ```
 
@@ -36,18 +41,21 @@ app/    Compose for TV 界面、本地 JSON 存档、音效
 | 数子 | `core/.../rules/Scorer.kt` |
 | MCTS 搜索与难度分档 | `core/.../ai/MctsEngine.kt`、`Difficulty.kt` |
 | 着法评分（含位置价值、一线惩罚） | `core/.../ai/PlayoutPolicy.kt` |
+| 端侧网络前向（策略 + 价值） | `core/.../ai/PolicyValueNet.kt` |
+| 权重装配与缺失回退 | `app/.../data/NetAssets.kt` |
 | 电视端焦点与按键处理 | `app/.../ui/components/TvComponents.kt` |
 | 棋盘绘制与提子动画 | `app/.../ui/game/BoardCanvas.kt` |
 
 ## 构建
 
-需要 JDK 17 和 Android SDK（compileSdk 37）。
+需要 **JDK 17**、**Android SDK（compileSdk 37）**、**Gradle 9.8**（AGP 9 要求 Gradle 9.x）。
+本仓库不附 gradle wrapper，用本机 gradle 即可。
 
 ```bash
 # local.properties 里写本机 SDK 路径
 echo "sdk.dir=/path/to/Android/Sdk" > local.properties
 
-./gradlew :app:assembleRelease
+gradle :app:assembleRelease
 # 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
@@ -64,8 +72,8 @@ APK 同时声明了普通 `LAUNCHER` 和 `LEANBACK_LAUNCHER` 两个入口——
 ## 测试
 
 ```bash
-./gradlew :core:test        # 规则与 AI：63 个用例
-./gradlew :app:test         # 界面与焦点：23 个用例（Robolectric + Compose）
+gradle :core:test                # 规则 + 引擎 + 网络前向：72 个用例
+gradle :app:testDebugUnitTest    # 界面布局 + 焦点 + 权重装配：36 个用例（Robolectric + Compose）
 ```
 
 规则部分用**朴素参考实现做差分比对**（`GoRulesConformanceTest`）：
@@ -100,12 +108,20 @@ avatars.dir=/absolute/path/to/<你的目录>
 
 ## 已知边界
 
-- AI 是纯 Kotlin 实现的 MCTS，**靠电视的 CPU 现算**，没有神经网络、没有开局库。
-  9 路大师档约 3000 次模拟/3 秒；19 路候选点变多，同样时间里只能算约 1200 次，
-  所以 19 路的高难度档棋力明显弱于 9 路。
-- 数子采用简化的「只接触单色的空区归该色」算法，不是严格的中国规则数子。
-  正常局面下没有差别，极端局面（盘上只剩单色）会失真——认输局因此一概不数子。
-- 提子动画时长 900ms 是按「截图延迟约 0.7 秒」倒推定的，属于取悦眼睛的经验值。
+- **算力是硬约束**。网络前向跑在电视 CPU 上（纯 Kotlin 手写卷积），实测单次前向
+  32×2 约 38 ms、64×4 约 236 ms、64×6 约 356 ms；13 路同一架构再慢约 2.1 倍
+  （与棋盘点数成正比，169/81）。一次选点的代价是 `候选数 ×（1 + 应手数）` 次前向，
+  于是每手等多久基本由网络大小与档位决定 —— 实测 9 路：入门 2.6 秒、初级 0.5 秒、
+  中级 1.4 秒、高级 14.2 秒、大师 15.3 秒。「AI 最长思考」默认取**最大档 15 秒**，
+  高难度档会用到接近上限，这是设定如此（等待时有「思考中…」提示）。
+- 网络是**可选资源包**：某尺寸/档位缺权重就回退到无网络的随机 rollout 路径，
+  功能降级但不崩；缺失会被记住，不会每次开局都去读一遍 assets。
+- 数子采用简化的「只接触单色的空区归该色」算法，**不判死子**（盘上仍有气的死棋会算成活的），
+  也不是严格的中国规则数子。正常局面偏差很小，极端局面（盘上只剩单色）会失真
+  —— 认输局因此一概不数子。
+- 提子动画是两段：**闪 1 秒 → 淡出 1 秒**（用户指定的节奏）。
+- 19 路暂不放行：语料与十份网络已备好，但五档阶梯尚未验通 ——
+  放进选项里孩子一选就会掉进「没有网络」的回退路径。
 
 ## 许可证
 

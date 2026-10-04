@@ -2,6 +2,7 @@ package com.heizhu.weiqi.ui
 
 import android.app.Activity
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
@@ -81,8 +82,10 @@ fun AppRoot(vm: GameViewModel) {
             Screen.RESULT -> {
                 val result = ui.result
                 if (result == null) {
-                    // 结果丢失（例如进程重建）时兜底回首页，不留在空白页
-                    vm.navigateTo(Screen.HOME)
+                    // 结果丢失（例如进程重建）时兜底回首页，不留在空白页。
+                    // ⚠️ 副作用必须放在 LaunchedEffect 里：在组合期直接改状态
+                    //（这里是写 _screen）是 Compose 的反模式，会触发重组的未定义行为。
+                    LaunchedEffect(Unit) { vm.navigateTo(Screen.HOME) }
                 } else {
                     ResultScreen(
                         result = result,
