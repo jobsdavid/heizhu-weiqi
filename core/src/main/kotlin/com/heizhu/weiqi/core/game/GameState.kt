@@ -305,6 +305,7 @@ class GameState(
         return play(index % size, index / size, color)
     }
 
+
     /** 当前轮到的一方停一手。 */
     fun passMove(color: Stone): MoveOutcome {
         if (isOver) return MoveOutcome.GameAlreadyOver

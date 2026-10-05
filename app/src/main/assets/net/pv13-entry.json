@@ -5,7 +5,7 @@
   {
    "name": "stem.w",
    "shape": [
-    16,
+    64,
     3,
     3,
     3
@@ -15,60 +15,196 @@
   {
    "name": "stem.b",
    "shape": [
-    16
+    64
    ],
-   "offset": 432
+   "offset": 1728
   },
   {
    "name": "block0.c1.w",
    "shape": [
-    16,
-    16,
+    64,
+    64,
     3,
     3
    ],
-   "offset": 448
+   "offset": 1792
   },
   {
    "name": "block0.c1.b",
    "shape": [
-    16
+    64
    ],
-   "offset": 2752
+   "offset": 38656
   },
   {
    "name": "block0.c2.w",
    "shape": [
-    16,
-    16,
+    64,
+    64,
     3,
     3
    ],
-   "offset": 2768
+   "offset": 38720
   },
   {
    "name": "block0.c2.b",
    "shape": [
-    16
+    64
    ],
-   "offset": 5072
+   "offset": 75584
+  },
+  {
+   "name": "block1.c1.w",
+   "shape": [
+    64,
+    64,
+    3,
+    3
+   ],
+   "offset": 75648
+  },
+  {
+   "name": "block1.c1.b",
+   "shape": [
+    64
+   ],
+   "offset": 112512
+  },
+  {
+   "name": "block1.c2.w",
+   "shape": [
+    64,
+    64,
+    3,
+    3
+   ],
+   "offset": 112576
+  },
+  {
+   "name": "block1.c2.b",
+   "shape": [
+    64
+   ],
+   "offset": 149440
+  },
+  {
+   "name": "block2.c1.w",
+   "shape": [
+    64,
+    64,
+    3,
+    3
+   ],
+   "offset": 149504
+  },
+  {
+   "name": "block2.c1.b",
+   "shape": [
+    64
+   ],
+   "offset": 186368
+  },
+  {
+   "name": "block2.c2.w",
+   "shape": [
+    64,
+    64,
+    3,
+    3
+   ],
+   "offset": 186432
+  },
+  {
+   "name": "block2.c2.b",
+   "shape": [
+    64
+   ],
+   "offset": 223296
+  },
+  {
+   "name": "block3.c1.w",
+   "shape": [
+    64,
+    64,
+    3,
+    3
+   ],
+   "offset": 223360
+  },
+  {
+   "name": "block3.c1.b",
+   "shape": [
+    64
+   ],
+   "offset": 260224
+  },
+  {
+   "name": "block3.c2.w",
+   "shape": [
+    64,
+    64,
+    3,
+    3
+   ],
+   "offset": 260288
+  },
+  {
+   "name": "block3.c2.b",
+   "shape": [
+    64
+   ],
+   "offset": 297152
+  },
+  {
+   "name": "block4.c1.w",
+   "shape": [
+    64,
+    64,
+    3,
+    3
+   ],
+   "offset": 297216
+  },
+  {
+   "name": "block4.c1.b",
+   "shape": [
+    64
+   ],
+   "offset": 334080
+  },
+  {
+   "name": "block4.c2.w",
+   "shape": [
+    64,
+    64,
+    3,
+    3
+   ],
+   "offset": 334144
+  },
+  {
+   "name": "block4.c2.b",
+   "shape": [
+    64
+   ],
+   "offset": 371008
   },
   {
    "name": "pconv.w",
    "shape": [
     16,
-    16,
+    64,
     1,
     1
    ],
-   "offset": 5088
+   "offset": 371072
   },
   {
    "name": "pconv.b",
    "shape": [
     16
    ],
-   "offset": 5344
+   "offset": 372096
   },
   {
    "name": "pout.w",
@@ -78,31 +214,31 @@
     1,
     1
    ],
-   "offset": 5360
+   "offset": 372112
   },
   {
    "name": "pout.b",
    "shape": [
     1
    ],
-   "offset": 5376
+   "offset": 372128
   },
   {
    "name": "vconv.w",
    "shape": [
     8,
-    16,
+    64,
     1,
     1
    ],
-   "offset": 5377
+   "offset": 372129
   },
   {
    "name": "vconv.b",
    "shape": [
     8
    ],
-   "offset": 5505
+   "offset": 372641
   },
   {
    "name": "vfc1.w",
@@ -110,14 +246,14 @@
     64,
     1352
    ],
-   "offset": 5513
+   "offset": 372649
   },
   {
    "name": "vfc1.b",
    "shape": [
     64
    ],
-   "offset": 92041
+   "offset": 459177
   },
   {
    "name": "vfc2.w",
@@ -125,17 +261,18 @@
     1,
     64
    ],
-   "offset": 92105
+   "offset": 459241
   },
   {
    "name": "vfc2.b",
    "shape": [
     1
    ],
-   "offset": 92169
+   "offset": 459305
   }
  ],
- "bytes": 368680,
+ "bytes": 1837224,
  "value_scale": 10.0,
- "k_winrate": 0.30629642811224184
+ "k_winrate": 0.2891755211412608,
+ "view": "relative"
 }

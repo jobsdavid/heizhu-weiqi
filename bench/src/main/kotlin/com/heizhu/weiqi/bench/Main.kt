@@ -340,6 +340,10 @@ private fun appMatch(t: List<String>): String {
     var consec = 0
     var maxConsec = 0
     var illegal = false
+    // 诊断计数（见下方落子处的说明）：验收要能看见"低级错误"，不能只看胜负
+    var trueEyeFills = 0     // 填「真眼」的手数（引擎本该排除；非 0 即真错误）
+    var enclosedFills = 0    // 四邻全自己的手数（含假眼/补断，合法，仅记录）
+    var postPassPlies = 0    // 双方都停过手之后继续下的手数
     while (!state.isOver && plies < maxPlies) {
         val color = state.toMove
         val isA = (color == Stone.BLACK) == aBlack
@@ -352,6 +356,26 @@ private fun appMatch(t: List<String>): String {
             runBlocking {
                 engine.findBestMove(state.board, color, diff, Random(seed * 1000 + plies))
             }
+        }
+        // ⚠️ 诊断计数必须在**落子前**判断局面，且要用与引擎同一口径的定义：
+        //    · trueEyeFill：落点是「真眼」（board.isOwnEye）却仍然落子 ⇒ 真正的低级错误，
+        //      引擎的候选生成里**本该**排除它（collectCandidates 里有一句 isOwnEye 过滤）。
+        //    · enclosed（四邻全自己但非真眼）：这是"假眼/自家地盘点"，补断、连接时是**合法**着法，
+        //      所以只计数、不当错误 —— 我第一版把它当真错误是**错的**，先在这里改对。
+        if (mv >= 0 && state.board.isOwnEye(mv, color)) trueEyeFills++
+        if (mv >= 0) {
+            val x = mv % size
+            val y = mv / size
+            val myCode = if (color == Stone.BLACK) 1 else 2
+            var enclosed = true
+            for ((dx, dy) in listOf(1 to 0, -1 to 0, 0 to 1, 0 to -1)) {
+                val nx = x + dx; val ny = y + dy
+                if (nx in 0 until size && ny in 0 until size) {
+                    if (state.board.cells[ny * size + nx].toInt() != myCode) { enclosed = false; break }
+                }
+            }
+            if (enclosed) enclosedFills++
+            if (passes >= 2) postPassPlies++
         }
         val outcome = if (mv < 0) state.passMove(color) else state.play(mv, color)
         if (outcome !is MoveOutcome.Ok) {
@@ -388,6 +412,19 @@ private fun appMatch(t: List<String>): String {
         append(",\"winner\":\"").append(winner).append("\"")
         append(",\"blackMargin\":").append(res?.score?.blackMargin ?: 0)
         append(",\"komi\":").append(state.komi)
+        // 棋谱：为了能"看棋"做验收（只看胜负无法判断着法是否合理）。
+        // ⚠️ bench 刻意不做 GTP 协议（见文件头注释），所以这里输出**原始索引与颜色**，
+        //    由 Python 侧负责转 GTP —— 转换只在需要展示时发生，不进入评测主路径。
+        append(",\"moveIdx\":[").append(state.moves.joinToString(",") { m ->
+            (if (m.index == GameState.PASS_INDEX) -1 else m.index).toString()
+        }).append("]")
+        append(",\"moveColors\":\"").append(state.moves.joinToString("") { m ->
+            if (m.color == Stone.BLACK) "B" else "W"
+        }).append("\"")
+        append(",\"handicap\":").append(state.handicap)
+        append(",\"trueEyeFills\":").append(trueEyeFills)
+        append(",\"enclosedFills\":").append(enclosedFills)
+        append(",\"postPassPlies\":").append(postPassPlies)
         append("}")
     }
 }

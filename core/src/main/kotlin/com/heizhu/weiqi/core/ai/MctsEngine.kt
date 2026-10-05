@@ -247,7 +247,9 @@ class MctsEngine(
         // 它只否掉**明显没下完**的局面。
         var stonesOnBoard = 0
         for (i in 0 until cellCount) if (board.cells[i].toInt() != 0) stonesOnBoard++
-        if (stonesOnBoard * 2 >= cellCount && isSettledEnough(board) && nobodyLosesByPassing) {
+        // ⚠️ 用 hasDamePoint（结构判据）替代 isSettledEnough（空点数代理指标）：
+        //    后者会被提子扰动而自锁，导致对局永远靠 1.6 倍手数兜底结束。
+        if (stonesOnBoard * 2 >= cellCount && !hasDamePoint(board) && nobodyLosesByPassing) {
             if (passLogEnabled) System.err.println("[PASS-2/收工判据] color=$color 盘上子=$stonesOnBoard 难度=${difficulty.id}")
             lastStats = SearchStats(0, System.currentTimeMillis() - startedAt, rootCandidates.size)
             return PASS_MOVE
@@ -359,8 +361,14 @@ class MctsEngine(
         // 即默认设置下各档行为与加宽前完全一致，只有用户主动调大才会变。
         val widen = (budgetMs.toDouble() / MIN_THINK_BUDGET_MS).coerceIn(1.0, 3.0)
         val poolSize = (difficulty.netTopK * widen).toInt().coerceAtLeast(difficulty.netTopK)
+        // 开局判定：与 collectCandidates 同一口径（盘上子数 < 边长）
+        var netStoneCount = 0
+        for (i in 0 until cellCount) if (board.cells[i].toInt() != 0) netStoneCount++
+        val netOpening = netStoneCount < size
         val byPolicy = (0 until cellCount)
-            .filter { board.cells[it].toInt() == 0 && rootEval.policy[it] > 0f }
+            // ⚠️ 必须用 isConsiderable：只按「空点」筛会漏掉"自己的真眼"，
+            //    那会让 AI 填掉自己的眼、大块被提（见 isConsiderable 的注释）。
+            .filter { isConsiderable(board, it, color, netOpening) && rootEval.policy[it] > 0f }
             .sortedByDescending { rootEval.policy[it] }
             .take(poolSize)
 
@@ -562,6 +570,59 @@ class MctsEngine(
      *
      * @param radius > 0 时只保留该半径内有棋子的点（低难度档的「视野限制」）
      */
+    /**
+     * 两条路径（随机 rollout / 网络引导）**必须共用**的「这个点值不值得考虑」规则。
+     *
+     * ⚠️ 为什么要有这个函数（2026-10-05 实测出来的真 bug）：
+     * `collectCandidates` 里一直有「排除自己的真眼」这一条，但**网络路径没有**——
+     * `findBestMoveWithNet` 的候选只按「空点 + 网络策略>0」筛过（注释里也写明了
+     * 它没滤劫禁/自杀，后来补了合法性，却漏了「真眼」）。于是产品里只要加载了网络，
+     * AI 就会往自己的真眼里落子：实测 9 路一盘棋 **填真眼 11 手**，
+     * 自己的眼被填掉 ⇒ 大块被提 ⇒ 终局黑净胜 -27/-65 目（9 路全盘才 81 点）。
+     * 这不是"棋力弱"，是规则级低级错误，也是"AI 会填自己的空"这个用户可见症状的根因。
+     *
+     * 抽成一个函数的理由：规则只能有一个源。两条路径各写一遍，迟早再次漂移。
+     */
+    private fun isConsiderable(board: Board, index: Int, color: Stone, opening: Boolean): Boolean {
+        if (board.cells[index].toInt() != 0) return false   // 已有子
+        if (board.isOwnEye(index, color)) return false      // 自己的真眼：填了等于自毁
+        if (opening && lineOf(index) == 1) return false     // 开局一线：布局阶段价值极低
+        return true
+    }
+
+    /**
+     * 盘上**还有没有单官**（同时接触黑白两色的空点）。
+     *
+     * 「盘面是否真的定型」的**结构性**判据，用来替代原来的 `isSettledEnough`（空点数 ≤15%）。
+     *
+     * ⚠️ 为什么必须换掉"数空点"这个代理指标（2026-10-05 实测的自锁缺陷）：
+     *   空点数会被**提子**扰动 —— 每提一子就多出一个空点。于是
+     *   "填子 ⇒ 某块被提 ⇒ 空点又变多 ⇒ 永远不满足 ≤15% ⇒ 永远不停手" 形成自锁。
+     *   实测后果：9 路每盘都下到 129 手（= 81 × 1.6 的兜底上限，**最长连停只有 1**）
+     *   ⇒ 对局从来不是"双方停手"自然结束，而是被手数兜底掐断；13 路平均 264 手
+     *   （≈169 × 1.6）同一回事。而在无限填子的过程里，某一方大块被提 ⇒ −27/−65/−81 目的惨败。
+     *
+     * 而"无单官"不会被提子扰动：边界一旦闭合就不会重新打开。数子制下无单官之后，
+     * 往自家空里填子是零收益、往对方空里填子也无收益，唯一有收益的是"提掉死子" ——
+     * 那种着法由 [anyMoveGainsOver]（面积增益 > 2）挡住，所以这里只管结构。
+     */
+    private fun hasDamePoint(board: Board): Boolean {
+        for (i in 0 until cellCount) {
+            if (board.cells[i].toInt() != 0) continue
+            val n = BoardGeometry.neighbors(size, i, neighborBuf)
+            var touchesBlack = false
+            var touchesWhite = false
+            for (k in 0 until n) {
+                when (board.cells[neighborBuf[k]].toInt()) {
+                    1 -> touchesBlack = true
+                    2 -> touchesWhite = true
+                }
+            }
+            if (touchesBlack && touchesWhite) return true
+        }
+        return false
+    }
+
     private fun collectCandidates(
         board: Board,
         color: Stone,
@@ -576,19 +637,10 @@ class MctsEngine(
 
         val scored = ArrayList<ScoredMove>(cellCount)
         for (index in 0 until cellCount) {
-            if (board.cells[index].toInt() != 0) continue
-            // 填自己的眼等于自毁，直接排除
-            if (board.isOwnEye(index, color)) continue
-            // 低难度档的「视野限制」：只看得见棋子附近
+            // 共用规则：空点 + 非自己的真眼 + 开局不落一线
+            if (!isConsiderable(board, index, color, opening)) continue
+            // 低难度档的「视野限制」：只看得见棋子附近（仅此一路径有）
             if (radius > 0 && !isNearAnyStone(board, index, radius)) continue
-            // 开局棋理：不在第一线落子。
-            //
-            // 只靠 [PlayoutPolicy.heuristicScore] 加分是不够的 —— 空盘上每个点的
-            // 胜率几乎一样，搜索给不出偏好，最终选择就退化成在几十个等价候选里
-            // 随机采样。实测 9 路空盘：初级档第一手落在了 J6（一线）。
-            // 一线在布局阶段价值极低，这是围棋的常识，直接硬排除比调权重可靠。
-            // 只在开局生效；中后盘的一线（做活、官子、挡）完全不受影响。
-            if (opening && lineOf(index) == 1) continue
 
             // 合法性校验（自杀 / 打劫），顺带白拿两个战术信号：
             //   captureCount —— 这手能提几子
@@ -645,23 +697,6 @@ class MctsEngine(
         }
     }
 
-    /**
-     * 局面是否已经「算得清」：空点不超过 **15%**。
-     *
-     * 这是收工规则的第一道闸门：数子判定在空盘上会退化（所有空点都算盘上唯一一色），
-     * 不设这道闸门的话，开局随手一停就会被误判成「没得下了」。
-     *
-     * ⚠️ 阈值曾在 40%，**太松**（2026-10-05 实测定位）：
-     * 跨档对局里 entry 配置执黑时盘上才 54 子（空点 27 个 = 33%）就双双判"可收工"，
-     * 48~58 手结束 —— 9 路此时还有大片未定地盘，静态面积估算在这个密度下完全不可靠，
-     * 对手白捡一大片，黑白胜率被扭到 25%/75%。
-     * 真终局时通常只剩 0~6 个单官，所以 15%（9 路=12 点、13 路=25 点）不会误挡正常终局。
-     */
-    private fun isSettledEnough(board: Board): Boolean {
-        var empty = 0
-        for (i in 0 until cellCount) if (board.cells[i].toInt() == 0) empty++
-        return empty * 100 <= cellCount * 15
-    }
 
     private fun anyMoveGainsOver(
         board: Board,
