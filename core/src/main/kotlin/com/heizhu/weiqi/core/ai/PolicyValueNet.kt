@@ -24,6 +24,8 @@ class PolicyValueNet private constructor(
     /** 目差 → 胜率的斜率：winrate = sigmoid(kWinrate × scoreLead)。训练侧拟合后写进 manifest。 */
     val kWinrate: Double,
     private val valueScale: Double,
+    /** 输入是否用「我方/对方」相对视角（见 [Manifest.view]）。旧网络无此字段 ⇒ 默认绝对视角。 */
+    private val relativeView: Boolean = false,
 ) {
 
     @Serializable
@@ -37,6 +39,17 @@ class PolicyValueNet private constructor(
         val bytes: Int = 0,
         @SerialName("value_scale") val valueScale: Double = 10.0,
         @SerialName("k_winrate") val kWinrate: Double = 0.5,
+        /**
+         * 输入视角：
+         * - `"absolute"`（默认，兼容旧网络）：[黑子, 白子, 是否轮到黑]
+         * - `"relative"`：[我方子, 对方子, 恒 1]，网络在结构上无法区分黑白 ⇒ 颜色对称是数学保证
+         *
+         * 为什么要这个字段：低档网络小、数据少，用绝对视角会学出"偏袒某一色"
+         * （实测入门档自战黑 33% / 白 67%）。而相对视角虽对称，却在同训练量下棋力偏低
+         * —— 对"低档"这正好（本来就该弱），对"高档"则不可接受。
+         * 于是让**每个网络自带视角标记**，两档可以共存、各取所长。
+         */
+        val view: String = "absolute",
     )
 
     /** 一次评估的结果。 */
@@ -70,16 +83,32 @@ class PolicyValueNet private constructor(
     fun evaluate(cells: ByteArray, toMove: Byte): Eval {
         require(cells.size == ss) { "棋盘尺寸不符：${cells.size} != $ss" }
 
-        // ---- 输入 3 个平面：黑子 / 白子 / 是否轮到黑 ----
+        // ---- 输入 3 个平面（按网络自带的视角标记构造）----
+        //  · relative：[我方子, 对方子, 恒 1] —— 网络看不到"黑/白"，偏色在结构上不可能发生
+        //  · absolute：[黑子, 白子, 是否轮到黑] —— 旧网络（含发货版）的编码，必须逐字保持
+        // ⚠️ 两者不可混用：网络权重是按各自编码训练的，错配会让输出全错。
+        //    标记存在 manifest 的 view 字段里，由训练侧导出时写入（见 train_pv.py）。
         var x = FloatArray(3 * ss)
-        for (i in 0 until ss) {
-            when (cells[i].toInt()) {
-                1 -> x[i] = 1f                    // 黑子平面
-                2 -> x[ss + i] = 1f               // 白子平面
+        if (relativeView) {
+            val me = toMove.toInt()                       // 我方 = 当前行棋方（1 黑 / 2 白）
+            val opp = if (me == 1) 2 else 1
+            for (i in 0 until ss) {
+                when (cells[i].toInt()) {
+                    me -> x[i] = 1f                        // 我方棋子平面
+                    opp -> x[ss + i] = 1f                  // 对方棋子平面
+                }
             }
+            java.util.Arrays.fill(x, 2 * ss, 3 * ss, 1f)   // 恒 1：视角已统一
+        } else {
+            for (i in 0 until ss) {
+                when (cells[i].toInt()) {
+                    1 -> x[i] = 1f                         // 黑子平面
+                    2 -> x[ss + i] = 1f                    // 白子平面
+                }
+            }
+            val blackToMove = if (toMove.toInt() == 1) 1f else 0f
+            java.util.Arrays.fill(x, 2 * ss, 3 * ss, blackToMove)
         }
-        val blackToMove = if (toMove.toInt() == 1) 1f else 0f
-        java.util.Arrays.fill(x, 2 * ss, 3 * ss, blackToMove)
 
         // ---- stem：3→width，3×3，pad 1 ----
         // ⚠️ 这里**必须带 relu**（PyTorch 侧是 F.relu(stem_bn(stem(x)))）。
@@ -240,7 +269,7 @@ class PolicyValueNet private constructor(
                     "层 ${l.name} 越界：offset=${l.offset} n=$n total=${floats.size}"
                 }
             }
-            return PolicyValueNet(m.size, floats, map, m.kWinrate, m.valueScale)
+            return PolicyValueNet(m.size, floats, map, m.kWinrate, m.valueScale, m.view == "relative")
         }
 
         /** 权重占用（字节），用于日志与体积核对。 */

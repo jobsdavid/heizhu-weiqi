@@ -12,10 +12,18 @@ package com.heizhu.weiqi.core.ai
  * | 参数 | 作用 |
  * |---|---|
  * | [timeBudgetMs] / [maxPlayouts] | 搜索量。少 → 看不住后续变化 |
- * | [temperature] | 从访问分布采样而非取最优。高 → 选择更随机 |
- * | [blunderRate] | 概率性挑次优着法，模拟「看漏了」 |
+ * | [temperature] | ⚠️ **已弃用（全档恒 0）**：原为"按价值采样"，那是**放水**（明知有更好的却按概率挑差的） |
+ * | [blunderRate] | ⚠️ **已弃用（全档恒 0）**：原为"概率性挑次优着法"，同样是放水 |
  * | [localRadius] | **只在已有棋子 N 格范围内落子**，模拟初学者的视野局限 |
  * | [tacticAssist] | 根节点战术辅助档位，见下 |
+ *
+ * ## 档位靠什么拉开（2026-10-05 定稿）
+ *
+ * **绝不放水**：每一档都下"自己认为最好"的那一手，[temperature] 与 [blunderRate] 恒为 0。
+ * 差距只来自两个"不放水"的轴：
+ *   1. **棋感**（网络质量 —— 数据量 / 容量）：弱网看错局面，但它仍按自己认为最好的下；
+ *   2. **想得深浅**（[netPlies] 前瞻层数、[netTopK] 候选数）：少算几步。
+ * 这两条都必须在档位间**单调**（低档两项都不得高于高档），否则弱档会反超。
  *
  * ## [tacticAssist] 为什么必须存在
  *
@@ -66,58 +74,85 @@ enum class Difficulty(
      * （候选池小、噪声也小，反而躲过了价值网络的误差），所以低难度档改用层数+温度。
      */
     val netPlies: Int,
+    /**
+     * **让子数（handicap）—— 难度阶梯的最终旋钮**（2026-10-05 决策）。
+     *
+     * 为什么最终落到让子上：另外三条轴都实测失败 ——
+     *   · 网络容量（16×1/32×3/64×5）：棋力非单调
+     *   · 训练数据量（300/800/3000 条）：反单调
+     *   · 搜索量（netTopK / 前瞻层数）：非单调
+     *   · 训练步数做梯度：因语料量不足（24 局），验证集只有 1 局 ⇒ 噪声盖过信号，测不出
+     * 档位差始终小于测量噪声 ⇒ 只能换一条**确定性**的路径。
+     *
+     * 让子是围棋界调难度的标准做法（KataGo / Leela 同样用它），
+     * **不等于放水**：AI 每一手仍按自己最强的判断落子，只是起始局面不同。
+     *
+     * 语义：让 N 子 = 在星位摆 N 颗**玩家颜色的子**，由 AI 先下；贴目保持标准值不动
+（实测：让 komi 归零会在 9 路小盘上反过来补偿 AI，见 GameState.komi 的注释）。
+     */
+    val handicap: Int = 0,
+    // 标定依据（2026-10-05 实测：同网同预算、每档 40 局、两侧同网，唯一变量是让子数）
+    //   logit(受让方胜率) = +0.152 + 0.2118 × n  ⇒ 每颗星位子 ≈ +5.3 个百分点
+    //   实测点：n=0→0.525、1→0.600、2→0.625、3→0.650、4→0.750（单调）
+    //   反解：单子价值 ≈ 2.3 目，结局目差 σ ≈ 22 目（9 路共 81 点）
+    // 五档取 5 / 3 / 2 / 1 / 0，让相邻档的胜率差落在 4~8 个百分点，
+    // 强档留细一级（1 子）方便再调。
 ) {
     ENTRY(
         id = "entry",
         displayName = "入门",
-        description = "会犯错的对手 · 刚学会规则就能赢",
+        description = "让你 5 子 · 刚学会规则就能赢",
         timeBudgetMs = 300,
         maxPlayouts = 300,
-        temperature = 1.2f,
-        blunderRate = 0.25f,
-        localRadius = 1,
+        temperature = 0f,     // 去放水：不再按价值随机采样（原 1.2）
+        blunderRate = 0f,     // 去放水：不再故意挑次优着法（原 0.25，每 4 手送一手）
+        localRadius = 0,
         tacticAssist = 2,
         netTopK = 6,
-        netPlies = 1,     // 入门：只看一层 + 高温度 → 最弱但不下废点
+        netPlies = 1,     // 入门：**想得最浅** —— 只看"我这手之后对方视角的价值"，不推对方应手
+        handicap = 5,   // 让 5 子：起步就比玩家少 3 手，是最确定的强度差
     ),
     BEGINNER(
         id = "beginner",
         displayName = "初级",
-        description = "会吃子、会逃跑 · 贪吃但会露破绽",
+        description = "让你 3 子 · 会吃子会逃跑，但会露破绽",
         timeBudgetMs = 600,
         maxPlayouts = 1_200,
-        temperature = 0.7f,
-        blunderRate = 0.10f,
-        localRadius = 2,
+        temperature = 0f,     // 去放水（原 0.7）
+        blunderRate = 0f,     // 去放水（原 0.10）
+        localRadius = 0,
         tacticAssist = 2,
         netTopK = 8,
-        netPlies = 1,     // 初级：一层 + 中温度
+        netPlies = 1,     // 初级：同样只想一层，与入门的差距靠**更小的弱网**（数据量/容量）拉开
+        handicap = 3,   // 让 3 子：起步就比玩家少 2 手，是最确定的强度差
     ),
     INTERMEDIATE(
         id = "intermediate",
         displayName = "中级",
-        description = "有基本战术 · 需要认真下才能赢",
+        description = "让你 2 子 · 有基本战术，要认真下",
         timeBudgetMs = 1_200,
         maxPlayouts = 3_000,
-        temperature = 0.35f,
-        blunderRate = 0.03f,
+        temperature = 0f,     // 去放水（原 0.35）
+        blunderRate = 0f,     // 去放水（原 0.03）
         localRadius = 0,
         tacticAssist = 2,
         netTopK = 10,
         netPlies = 2,     // 中级起改用两层前瞻
+        handicap = 2,   // 让 2 子：起步就比玩家少 1 手，是最确定的强度差
     ),
     ADVANCED(
         id = "advanced",
         displayName = "高级",
-        description = "有全局观 · 会经营实地和外势",
+        description = "让你 1 子 · 有全局观，经营实地和外势",
         timeBudgetMs = 2_000,
         maxPlayouts = 8_000,
-        temperature = 0.15f,
+        temperature = 0f,     // 去放水（原 0.15）
         blunderRate = 0.0f,
         localRadius = 0,
         tacticAssist = 2,
         netTopK = 16,
         netPlies = 2,
+        handicap = 1,     // 让 1 子：与大师只差这一颗，是五档里最细的一级
     ),
     MASTER(
         id = "master",
@@ -126,7 +161,7 @@ enum class Difficulty(
         // 之前写的是「全力应战 · 9 路盘上不好惹」，结果在 13 路设置页上
         // 明晃晃地说着 9 路 —— 真机核对时发现。
         // 需要区分尺寸的文案走 [descriptionFor]。
-        description = "全力应战 · 不给机会",
+        description = "不让子 · 全力应战，不给机会",
         // 上限 15 秒：思考久一点不影响体验，15 秒是可接受的等待上限。
         //
         // 这条预算的意义**取决于走哪条路径**，别混：
@@ -145,6 +180,7 @@ enum class Difficulty(
         tacticAssist = 2,
         netTopK = 24,     // 候选最全 → 最强
         netPlies = 2,
+        handicap = 0,     // 分先：不让子，靠搜索与网络全力下
     );
 
     /** 是否启用「只在棋子附近落子」的视野限制 */

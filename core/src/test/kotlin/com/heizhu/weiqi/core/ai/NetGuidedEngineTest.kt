@@ -59,6 +59,29 @@ class NetGuidedEngineTest {
     }
 
     @Test
+    fun `预算极小时也必须给出盘内着法_不得因为一个候选都没算完就停一手`() {
+        // ⚠️ 这条用例的判据（结果必须落在盘内）**在旧实现下是红的**：
+        // 旧实现先检查「到点没有」，再评估第一个候选 —— 预算 0 时当场 break，
+        // scored 为空 → 返回停一手。而「AI 莫名停一手」比多等几毫秒严重得多
+        // （孩子看到的是对手突然不下了），所以新实现把第一个候选改成**无条件评估**。
+        // 变异验证：把 firstCandidate 那段无条件评估去掉，本用例必红。
+        val engine = MctsEngine(9, net = fixtureNet())
+        val board = Board(9)
+        for (budget in listOf(0L, 1L, 10L)) {
+            val move = runBlocking {
+                engine.findBestMove(
+                    board, Stone.BLACK, Difficulty.MASTER, kotlin.random.Random(4),
+                    timeBudgetOverrideMs = budget,
+                )
+            }
+            assertTrue(
+                "预算 ${budget}ms 时仍应给出盘内着法（可以不最优，但不能停一手），实际 $move",
+                move in 0 until 81,
+            )
+        }
+    }
+
+    @Test
     fun `无网络时参数不影响原路径_仍能出着法`() {
         // 覆盖"忘记给 net 传参时旧路径照常工作"这条底线
         val engine = MctsEngine(9)

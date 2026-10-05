@@ -217,7 +217,17 @@ fun GameScreen(
         confirmUndo = true
     }
 
+    // 返回键长按开菜单的计时基准（毫秒）
+    var backDownAt by remember { mutableStateOf(0L) }
+
     fun handleKey(event: androidx.compose.ui.input.key.KeyEvent): Boolean {
+        // ⚠️ 返回键按下时必须**无条件**记录时刻，位置要早于下面所有分支
+        // （包括「悔棋确认框」和「暂停菜单」那两个提前返回的分支）。
+        // 否则：确认框打开时的那次按下不会更新基准，松开时会拿一个很久以前的时间做差，
+        // 被误判成"长按"而弹出菜单 —— 实测就是靠这条用例（返回键再按一次是取消）抓出来的。
+        if (event.key == Key.Back && event.type == KeyEventType.KeyDown) {
+            backDownAt = System.currentTimeMillis()
+        }
         fun dirOf(key: Key): Dir? = when (key) {
             Key.DirectionUp -> Dir.UP
             Key.DirectionDown -> Dir.DOWN
@@ -236,6 +246,7 @@ fun GameScreen(
                     true
                 }
                 Key.Back, Key.Menu -> {
+                    backDownAt = 0L   // 标成「本次按下已被确认框消费」，松开时不再触发悔棋
                     confirmUndo = false
                     true
                 }
@@ -248,6 +259,7 @@ fun GameScreen(
             if (event.type != KeyEventType.KeyDown) return true
             return when (event.key) {
                 Key.Back, Key.Menu -> {
+                    backDownAt = 0L   // 同理：这次按下归菜单处理，松开时不再触发悔棋
                     menuOpen = false
                     true
                 }
@@ -297,7 +309,11 @@ fun GameScreen(
             }
         }
 
-        if (event.type != KeyEventType.KeyDown) return false
+        // ⚠️ 返回键的 KeyUp 也要放进来 —— 长按判定靠「按下到松开的时长」，
+        // 不能靠 repeatCount：遥控器是蓝牙 HID，内核不做按键重复，
+        // 应用收到的永远是一次 DOWN + 一次 UP（repeatCount 恒为 0）。
+        val isBackKey = event.key == Key.Back
+        if (event.type != KeyEventType.KeyDown && !isBackKey) return false
 
         return when (event.key) {
             Key.Enter, Key.DirectionCenter, Key.NumPadEnter -> {
@@ -309,8 +325,49 @@ fun GameScreen(
             // 但真机验证时发现：误碰一下返回键，刚下的一手就被撤了，反而更崩溃。
             // 现在先弹一句「要悔棋吗？」，确认才撤；要接着下就再按一次返回键。
             // 配额限制（每局 5 次）仍由 ViewModel 把关。
+            //
+            // **长按返回键 = 打开暂停菜单**（2026-10-05 真机实测后加）：
+            // 小米电视把遥控器的「菜单键」映射成了系统快捷面板 —— 发 KEYCODE_MENU
+            // 弹出的是系统的「信号源 / 米家 / 设置」面板，应用**永远收不到那个键**。
+            // 于是暂停菜单里的悔棋 / 提示 / 停一手 / 认输 / 退出全都够不到
+            // （实测：菜单键 82 / 139 / 176 / 256 / 186 全部打不开，其中 82 还弹了系统面板）。
+            // 返回键是遥控器上一定有的，用它兜住这条路；短按语义不变。
+            // **长按返回键 = 打开暂停菜单**（2026-10-05 真机实测后加）：
+            // 小米电视把遥控器的「菜单键」映射成了系统快捷面板 —— 发 KEYCODE_MENU
+            // 弹出的是系统的「信号源 / 米家 / 设置」面板，应用**永远收不到那个键**
+            // （实测 82 / 139 / 176 / 256 / 186 全部打不开，其中 82 还弹了系统面板）。
+            // 于是暂停菜单里的悔棋 / 提示 / 停一手 / 认输 / 退出全都够不到。
+            //
+            // 判定用**按住时长**而不是 repeatCount：遥控器是蓝牙 HID，内核不做按键重复，
+            // 应用收到的永远是一次 DOWN + 一次 UP（repeatCount 恒为 0，实测长按无效）。
+            // 短按语义不变（还是弹悔棋确认框），长按 600ms 才开菜单。
             Key.Back -> {
-                requestUndo(); true
+                if (event.type == KeyEventType.KeyDown) {
+                    // ① 事件自带 longPress 标志（adb --longpress 注入、部分遥控器会带）
+                    val hasLongPressFlag = (event.nativeKeyEvent.flags and
+                        android.view.KeyEvent.FLAG_LONG_PRESS) != 0
+                    if (hasLongPressFlag) {
+                        backDownAt = 0L
+                        confirmUndo = false
+                        menuOpen = true
+                        menuIndex = 0
+                    } else {
+                        // ② 否则先只记时刻，等松开时按「按住时长」判定
+                        backDownAt = System.currentTimeMillis()
+                    }
+                } else if (backDownAt != 0L) {
+                    // backDownAt == 0 表示这次按下已经被上面的确认框/菜单分支消费掉了，别再动作
+                    val held = System.currentTimeMillis() - backDownAt
+                    backDownAt = 0L
+                    if (held >= 600L) {
+                        confirmUndo = false
+                        menuOpen = true
+                        menuIndex = 0
+                    } else {
+                        requestUndo()
+                    }
+                }
+                true
             }
             Key.Menu -> {
                 menuOpen = true
@@ -697,11 +754,11 @@ private fun HintBox(ui: GameUi) {
         // 又不知道可以停一手，对局就永远结束不了
         // 用显式换行而不是让它自动折：自动折的行数随字号/字体/屏宽变化，
         // 提示区高度就不固定了。这里定死两行，正好落在 HintSlotHeight 里。
-        ui.playerHasNoLegalMove -> "你没地方下了\n菜单键 → 停一手"
+        ui.playerHasNoLegalMove -> "你没地方下了\n长按返回键 → 停一手"
         ui.thinking -> "黑猪大人正在思考…"
         ui.previewIllegal != null -> ui.previewIllegal
         ui.previewCapture > 0 -> "落在光标处可以吃掉对方 ${ui.previewCapture} 子"
-        else -> "OK 落子 · 返回键悔棋 · 菜单键更多"
+        else -> "OK 落子 · 返回键悔棋 · 长按返回键更多"
     }
     val color = when {
         ui.isOver -> TextSecondary

@@ -51,6 +51,23 @@ class MctsEngine(
      * 随机 rollout 的实现都保留，便于对照（也便于必要时回退）。
      */
     private val net: PolicyValueNet? = null,
+    /**
+     * 终局裁判用的网络。**应当比 [net] 更强**（app 侧统一传「大师」档权重）。
+     *
+     * ## 为什么要跟选点网络分开（2026-10-05 实测）
+     *
+     * 判「该不该收工」靠的是价值头对「对方下一手能赚多少」的敏感度。
+     * 低难度档的网络太粗糙：入门档只有 `16×1 @100 样本`，实测它会给出
+     * 「对方走任何一手，我的目差都不变」（`cost=0.0`）—— 而对方明明在吃子。
+     * 于是它一路停手被吃光，孩子看到的就是「电脑不动了，我一路吃」
+     * （真机记录里留下「9 路 · 入门 黑 81 : 0 白」）。
+     *
+     * 选点仍用 [net]（保住档位难度），只把**这一步判断**换成强网络 —— 裁判要准，
+     * 棋手可以弱。这样入门档仍然是入门的棋力，但不会再摆烂。
+     *
+     * null = 用 [net]（老行为，便于对照与回退）。
+     */
+    private val judgeNet: PolicyValueNet? = null,
 ) {
 
     private val cellCount = size * size
@@ -90,9 +107,13 @@ class MctsEngine(
      * ⇒ 试过的四条补丁（阈值 2→1、阈值→0、改按盘面差、加"能提子就不许停手"）
      * 全部失败，详见类内收工判据处的记录。真正的修法是让终局判断改用**网络价值**。
      */
+    /**
+     * 停手原因诊断日志开关（排查用）：`WEIQI_PASS_LOG=1` 时把每次"返回停一手"的
+     * 出口和现场打到 stderr。默认关闭 —— 产品里不该有调试输出。
+     */
+    private val passLogEnabled = System.getenv("WEIQI_PASS_LOG") == "1"
+
     private val PASS_GAIN_THRESHOLD = 2
-
-
 
     /**
      * 上一次搜索的统计。用于**实测目标设备上的算力**——
@@ -135,6 +156,12 @@ class MctsEngine(
         val startedAt = System.currentTimeMillis()
         val rootCandidates = generateRootCandidates(board, color, difficulty)
         if (rootCandidates.isEmpty()) {
+            var st = 0
+            for (i in 0 until cellCount) if (board.cells[i].toInt() != 0) st++
+            if (passLogEnabled) System.err.println(
+                "[PASS-1/候选为空] color=$color 盘上子=$st 难度=${difficulty.id} " +
+                    "radius=${difficulty.localRadius} 空点=${cellCount - st}"
+            )
             lastStats = SearchStats(0, System.currentTimeMillis() - startedAt, 0)
             return PASS_MOVE
         }
@@ -168,14 +195,60 @@ class MctsEngine(
         //   一串 +1 的翻转；任何阈值都切不开这两类。
         //   ⇒ 真正的修法是让终局判断改用**网络价值**（端侧已有可用的价值头），
         //     这是一次结构性改动，不再靠打补丁。
-        if (isSettledEnough(board) &&
-            !anyMoveGainsOver(board, color, rootCandidates, PASS_GAIN_THRESHOLD) &&
-            !anyMoveGainsOver(
-                board, color.opponent,
-                generateRootCandidates(board, color.opponent, difficulty),
-                PASS_GAIN_THRESHOLD,
-            )
-        ) {
+        // 收工规则（围棋的终局机制）：**双方都无利可图时才停手**。
+        //
+        // ⚠️ 判据在 2026-10-05 换了**评估口径**（不是调参）：
+        //   网络可用 → 用**网络价值头**判断"还有没有值得下的手"
+        //   网络不可用 → 回退到原来的静态面积估算（保证老路径行为不变）
+        //
+        // 为什么非换不可：静态面积估算**看不见防守的价值**。一块棋将被杀时，
+        // 网络会说"这一手能救回一大片"，面积估算只看到"加一子、自己的空少一点 = 净 0"，
+        // 判"没收益"→ 停手 → 对手一路吃光整盘。孩子在真机上遇到的就是这个：
+        // 历史战绩里留下「9 路 · 入门 黑 81 : 0 白 · 129 手」——白棋（AI）被吃光全盘。
+        // 四条静态口径的补丁（阈值 2→1 / 改盘面差 / 加提子判据 / 不动）实测全败，
+        // 说明病在口径本身。
+        //
+        // 两道闸门仍然保留：
+        //   1. 空点 ≤ 40%：否则数子/估值在空盘上退化，开局随手一停就被误判成「没得下了」。
+        //   2. 任一方还有能改善目差的一手，就都继续下。
+        // ⚠️ 2026-10-05 的两次尝试都**实测无效**，已回滚，别再走：
+        //   ① 收工判据换成「网络价值口径」（判"停手会不会亏"）→ 废局 10 → 15 局
+        //   ② 引入 judgeNet（用大师网络当终局裁判）→ 无明显改善
+        //   ③ 加「落后方不许停手」→ 废局 10 → 40 局，最差
+        // 现在的判据回到发货版的静态面积口径 —— **保持基准干净**，
+        // 摆烂问题留待用 app_baseline.py（产品口径探针）定位后一次修对。
+        // ⚠️ 收工判据**不受档位视野限制**（2026-10-05 实测定位的机制，别改回去）：
+        // 原来这里用 `generateRootCandidates(..., difficulty)` 去猜"对方还有没有得利手段"，
+        // 用的却是**我自己的档位视野**。低档视野窄（入门 localRadius=1）⇒ 看不见远处的杀着
+        // ⇒ 判"无利可图" ⇒ 停手 ⇒ **提前把地盘让出去**。
+        // 那不是"棋感弱"，是变相放水；更要命的是双方各按自己的档位评估 ⇒ 判据不一致
+        // ⇒ 交替停手、对局到不了终点（实测：跨档对局黑方净胜从 3 子掉到 0~1 子，
+        //   而"配置不同、网络相同"的对照同样偏 19 个点 ⇒ 根因就是这条）。
+        // 收工是"盘面到底定型没有"的**事实判断**，两侧必须用同一个更宽的视野；
+        // 「想得浅」仍由搜索侧体现（候选池/前瞻层数），不在这里。
+        val settleCandidates = { c: Stone ->
+            collectCandidates(board, c, radius = 0, tacticAssist = difficulty.tacticAssist)
+        }
+        val nobodyLosesByPassing =
+            !anyMoveGainsOver(board, color, settleCandidates(color), PASS_GAIN_THRESHOLD) &&
+                !anyMoveGainsOver(board, color.opponent, settleCandidates(color.opponent), PASS_GAIN_THRESHOLD)
+        // ⚠️ 2026-10-05 试过并**回滚**的一版：给判据加「落后方不许停手」。
+        // 理由是"落后方没有停手的资格"，但实测**适得其反**：落后方被迫绝望填子，
+        // 局面更崩、对局还打不完 —— 9 路 100 局里被判废的从 10 局涨到 **40 局**。
+        // ⇒ 别再用「不许停」这种硬堵的办法，问题的根在**裁判的网络太弱**（见下面 judgeNet）。
+        // ⚠️ 硬闸门：盘面远未定型时**任何一方都不许收工**（2026-10-05 实测的早终局缺陷）
+        //
+        // 实测现象：跨档对局里，entry 配置执黑时**48 手就双方停手**
+        // （9 路 81 点，此时盘上才 ~50 子、空点还有 30+），对手白捡一大片，
+        // 黑白胜率被扭曲到 25%/75%；而同档自战是正常的 111 手。
+        // 这条与档位无关、不猜对手，只问一个事实：**盘上子数够不够多**。
+        // 取"点数的一半"作门槛（9 路=40 子、13 路=84 子）：真终局时盘上通常远多于它，
+        // 而"提前收工"一律被挡住。这不是"不许停"那种硬堵（那条实测把局面搞得更崩），
+        // 它只否掉**明显没下完**的局面。
+        var stonesOnBoard = 0
+        for (i in 0 until cellCount) if (board.cells[i].toInt() != 0) stonesOnBoard++
+        if (stonesOnBoard * 2 >= cellCount && isSettledEnough(board) && nobodyLosesByPassing) {
+            if (passLogEnabled) System.err.println("[PASS-2/收工判据] color=$color 盘上子=$stonesOnBoard 难度=${difficulty.id}")
             lastStats = SearchStats(0, System.currentTimeMillis() - startedAt, rootCandidates.size)
             return PASS_MOVE
         }
@@ -268,7 +341,8 @@ class MctsEngine(
         val deadline = startedAt + budgetMs
         val rootEval = net.evaluate(board.cells, color.code)
 
-        // 候选池大小随预算伸缩 —— **这是「AI 最长思考时间」设置唯一真正的作用点**。
+        // 候选池大小随预算伸缩 —— 这是「AI 最长思考时间」设置的**作用点之一**
+        // （另一个是循环的收工判据：下一次前向放不下就停，见下面注释）。
         //
         // 实测发现的问题：候选数（netTopK）和前瞻层数（netPlies）原来都按档位写死，
         // 一手在电视上约 6 秒就算完了 —— 用户把「最长思考时间」设成 15/20/25/30 秒，
@@ -301,6 +375,7 @@ class MctsEngine(
             }
         }
         if (candidates.isEmpty()) {
+            if (passLogEnabled) System.err.println("[PASS-3/网络候选为空] color=$color 难度=${difficulty.id}")
             lastStats = SearchStats(0, System.currentTimeMillis() - startedAt, 0)
             return PASS_MOVE
         }
@@ -317,10 +392,26 @@ class MctsEngine(
         var bestValue = -Float.MAX_VALUE
         var evaluated = 0
         val oppColor = color.opponent
+        // 单次前向的**实测**均值（本次搜索内自适应）：已用时间 ÷ 已评估次数。
+        //
+        // 存在的理由：截止时间只在两次前向**之间**检查，所以单次前向比剩余预算长时
+        // 根本无法截断 —— 设定 15 秒、实测跑出 15.32 秒就是这么来的。
+        // 有了它才能改成「下一次前向放不下就收工」，让「最长思考」真的是最长。
+        fun forwardMsAt(now: Long): Double =
+            if (evaluated <= 0) 0.0 else (now - startedAt).toDouble() / evaluated
+
+        var firstCandidate = true
         for (mv in candidates) {
-            // 到时就收工，用已有最优 —— 这是"最长时长"的语义：
-            // 不是每次都要等满，而是复杂局面才有机会多用。
-            if (System.currentTimeMillis() >= deadline) break
+            // 收工判据：不是「到点才停」，而是「**下一轮评估放不下**就停」。
+            // 下一轮 = 1 次对方评估 + 最多 REPLY_CANDIDATES 次应手评估。
+            // ⚠️ 第一个候选无条件评估：否则预算极小时会一个候选都不算，直接走到
+            // 「scored 为空 → 停一手」—— AI 莫名停手比超时严重得多。
+            val now = System.currentTimeMillis()
+            if (!firstCandidate) {
+                val nextRound = forwardMsAt(now) * (1 + REPLY_CANDIDATES)
+                if (now >= deadline || (nextRound > 0.0 && now + nextRound > deadline)) break
+            }
+            firstCandidate = false
             simBoard.copyFrom(board)
             if (!applyMove(simBoard, mv, color)) continue
 
@@ -342,7 +433,16 @@ class MctsEngine(
             var worstForMe = Float.MAX_VALUE
             var sawReply = false
             for (om in oppCands) {
-                if (System.currentTimeMillis() >= deadline) break
+                // 同一个道理：这一次应手的前向放不下就收工。
+                // 应手是**可选深度**，提前收工是安全的 —— 下面 sawReply=false 时
+                // 会退回「我这手的即时价值」。
+                val nowReply = System.currentTimeMillis()
+                val oneForward = forwardMsAt(nowReply)
+                if (nowReply >= deadline ||
+                    (oneForward > 0.0 && nowReply + oneForward > deadline)
+                ) {
+                    break
+                }
                 probeBoard.copyFrom(simBoard)
                 if (!applyMove(probeBoard, om, oppColor)) continue
                 // 对方应完又轮到我，此时网络给的正是**我方视角**的目差
@@ -362,6 +462,10 @@ class MctsEngine(
 
         // 一个合法候选都没有 → 停一手（宁可停手也不能下非法手）
         if (scored.isEmpty()) {
+            if (passLogEnabled) System.err.println(
+                "[PASS-4/候选全非法或被战术排除] color=$color 难度=${difficulty.id} " +
+                    "候选数=${candidates.size}"
+            )
             lastStats = SearchStats(0, System.currentTimeMillis() - startedAt, candidates.size)
             return PASS_MOVE
         }
@@ -542,37 +646,23 @@ class MctsEngine(
     }
 
     /**
-     * 局面是否已经「算得清」：空点不超过 40%。
+     * 局面是否已经「算得清」：空点不超过 **15%**。
      *
-     * 这是收工规则的第一道闸门。数子判定在空盘上会退化（所有空点都算盘上唯一一色），
+     * 这是收工规则的第一道闸门：数子判定在空盘上会退化（所有空点都算盘上唯一一色），
      * 不设这道闸门的话，开局随手一停就会被误判成「没得下了」。
+     *
+     * ⚠️ 阈值曾在 40%，**太松**（2026-10-05 实测定位）：
+     * 跨档对局里 entry 配置执黑时盘上才 54 子（空点 27 个 = 33%）就双双判"可收工"，
+     * 48~58 手结束 —— 9 路此时还有大片未定地盘，静态面积估算在这个密度下完全不可靠，
+     * 对手白捡一大片，黑白胜率被扭到 25%/75%。
+     * 真终局时通常只剩 0~6 个单官，所以 15%（9 路=12 点、13 路=25 点）不会误挡正常终局。
      */
     private fun isSettledEnough(board: Board): Boolean {
         var empty = 0
         for (i in 0 until cellCount) if (board.cells[i].toInt() == 0) empty++
-        return empty * 10 <= cellCount * 4
+        return empty * 100 <= cellCount * 15
     }
 
-    /**
-     * 是否存在某个候选着法能让 [color] 的「子数 + 围空」**增长超过 [threshold]**。
-     *
-     * 这是收工规则的第二道闸门。只在根候选上跑一次：13 路最多 169 个候选，
-     * 每个做一次落子 + 一次数子，量级在十万次基本操作，单手多花几毫秒。
-     *
-     * ## 这一条为什么不足以防住"落后方一路停手"
-     *
-     * 按本引擎的静态面积计分，「提掉对方一子」给提子方自己带来的是 +2（新子 +1、
-     * 被提点归我 +1），而「往对方空里白填一子」是 +1 —— 两者只差 1 点，
-     * 阈值取 2 时**恰好把 +2 的提子也排除在外**。实测阈值 2/1 两种取值都会出现
-     * "受害方一路停手、对手每手吃一点、十几手吃光全盘"（38 局里 31%，净胜 ±80 目）；
-     * 改成按"盘面差"衡量更糟（会把白填子记成 +3 收益，定型局面永远不判收工）；
-     * 又加过一条"对手能提子就不许停手"的精确判据 —— 实测提子给提子方的收益是 +3 > 2，
-     * 旧判据本就拦得住 ⇒ 冗余，也撤了。
-     * ⇒ **靠在这套静态估算上调参/加补丁救不了**：吃人靠的是一串 +1 的面积翻转，
-     *   而"翻 1 目的地"和"填单官"在面积计分下是同一个数字，任何阈值都切不开。
-     *   真正的修法是让终局判断改用**网络价值**（端侧已有可用的价值头）——
-     *   那是结构性改动，不在这条判据的调参范围内。
-     */
     private fun anyMoveGainsOver(
         board: Board,
         color: Stone,

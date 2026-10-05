@@ -130,6 +130,21 @@ class TvScreenLayoutTest {
     }
 
     /**
+     * 断言页面上出现了这段文字。
+     *
+     * 为什么需要它：选项行「选中了哪一个」在语义树里读不到（高亮是**颜色**），
+     * 而焦点节点的包围盒覆盖整条芯片行 —— 用它断「焦点在入门上」和「焦点在初级上」
+     * 会同时通过。能区分选中档的只有**跟着选中项变的说明文字**。
+     */
+    private fun assertTextShown(text: String) {
+        rule.waitForIdle()
+        assertTrue(
+            "页面上应出现文字「$text」",
+            textNodes().any { it.first.contains(text) },
+        )
+    }
+
+    /**
      * 断言「焦点落在包含某段文字的那个可聚焦单元上」。
      *
      * ⚠️ 必须用 `isFocused()`（比**值**），不能用
@@ -398,6 +413,7 @@ class TvScreenLayoutTest {
 
     @Test
     fun `新对局-初始焦点在开始对局上`() {
+        // 用户明确要求：进这一页焦点就落在「开始对局」按钮上（进来多是原样再开一局）。
         render { NewGameScreen(9, Difficulty.ENTRY, Stone.BLACK, { _, _, _ -> }, {}) }
         assertFocusedOn("开始对局")
     }
@@ -413,12 +429,59 @@ class TvScreenLayoutTest {
         assertFocusedOn("入门")
         tapKey("入门", Key.DirectionUp)          // → 棋盘大小
         assertFocusedOn("9 路")
-        // 左右键在这一行改值；**当前只开放 9 路**（13/19 等有了权重再开，见 HomeScreen），
-        // 所以按右键时值不变、焦点必须留在本行 —— 这正是要守的：方向键不能把焦点顶出去。
+        // 左右键在这一行改值，焦点必须留在本行 —— 方向键不能把焦点顶出去。
         tapKey("9 路", Key.DirectionRight)
         assertFocusedOn("9 路")
         tapKey("9 路", Key.DirectionLeft)
         assertFocusedOn("9 路")
+    }
+
+    /**
+     * 用户报的**根本问题**：「无法修改难度」—— "遥控器按了键但光标不动"只是他描述的现象，
+     * 他要的是难度真的能改（2026-10-05 用户当场纠正过一次）。
+     *
+     * 焦点按他的要求落在「开始对局」按钮上，所以**按钮上的左右键必须能改难度**。
+     */
+    @Test
+    fun `新对局-焦点在开始对局上时左右键也能改难度`() {
+        render { NewGameScreen(9, Difficulty.ENTRY, Stone.BLACK, { _, _, _ -> }, {}) }
+        rule.waitForIdle()
+        assertFocusedOn("开始对局")
+        assertTextShown(Difficulty.ENTRY.description)
+
+        tapKey("开始对局", Key.DirectionRight)
+        assertTextShown(Difficulty.BEGINNER.description)   // 入门 → 初级
+        tapKey("开始对局", Key.DirectionRight)
+        assertTextShown(Difficulty.INTERMEDIATE.description)     // 初级 → 中级
+        tapKey("开始对局", Key.DirectionLeft)
+        assertTextShown(Difficulty.BEGINNER.description)   // 中级 → 初级
+
+        // 焦点必须留在按钮上 —— 那是用户明确要求的初始位置，不能被左右键甩走
+        assertFocusedOn("开始对局")
+    }
+
+    /**
+     * 用户报的现象（2026-10-05 真机）：新对局页里改难度，「遥控器按了键但光标不动」。
+     *
+     * ⚠️ 判据必须用**说明文字**，不能用 [assertFocusedOn]：焦点节点是整条芯片行，
+     * 它的包围盒覆盖全部 5 个芯片 —— 拿它断言「焦点在入门上」和断言「焦点在初级上」
+     * 会**同时通过**，等于没测。只有说明文字是跟着选中档变的。
+     */
+    @Test
+    fun `新对局-难度行按左右键必须真的换档`() {
+        render { NewGameScreen(9, Difficulty.ENTRY, Stone.BLACK, { _, _, _ -> }, {}) }
+        rule.waitForIdle()
+
+        tapKey("开始对局", Key.DirectionUp)   // → 执什么颜色
+        tapKey("黑棋", Key.DirectionUp)       // → 对手难度
+        assertTextShown(Difficulty.ENTRY.description)
+
+        tapKey("入门", Key.DirectionRight)
+        assertTextShown(Difficulty.BEGINNER.description)
+        tapKey("初级", Key.DirectionRight)
+        assertTextShown(Difficulty.INTERMEDIATE.description)
+        tapKey("中级", Key.DirectionLeft)
+        assertTextShown(Difficulty.BEGINNER.description)
     }
 
     @Test

@@ -312,9 +312,9 @@ fun NewGameScreen(
     val focusRequesters = remember { List(unitCount) { FocusRequester() } }
     // 初始焦点直接放在最后一项「开始对局」上。
     //
-    // 三项设置都已沿用上次的值（见 SettingsStore），所以绝大多数情况下用户进这一页
-    // 就是想直接再开一局 —— 再让他按方向键挪到按钮上纯属多余。
-    // 要改设置的话，往上按一格就是了。
+    // ⚠️ 这是**用户明确要求**的行为（进这一页就是想把上一局的设置原样再开一局，
+    // 所以焦点就落在按钮上，按一下 OK 即可开局）。不要为了别的理由改它 ——
+    // 2026-10-05 我擅自把它挪到难度行「方便改难度」，被用户当场纠正。
     var focusIndex by remember { mutableStateOf(unitCount - 1) }
 
     LaunchedEffect(focusIndex) {
@@ -405,6 +405,35 @@ fun NewGameScreen(
                         label = "开始对局",
                         icon = TvIcon.PLAY,
                         style = TvButtonStyle.PRIMARY,
+                        // 焦点**初始就落在这个按钮上**（用户明确要求的设定），左右键在这里
+                        // **直接改难度** —— 交给按钮自己接管，而不是靠父层猜「焦点在哪一行」。
+                        //
+                        // 为什么必须由按钮自己接管（2026-10-05 真机实测）：父层用 `focusIndex`
+                        // 猜位置的写法在电视上会与实际焦点错位，出现「说明文字换了一档、高亮
+                        // 芯片还停在上一档」这种状态不一致。挂在按钮的 modifier 上，只有焦点
+                        // 真在这个按钮时才响应，不存在错位。
+                        //
+                        // 用户的原始反馈是「无法修改难度」（"按了键但光标不动"只是他描述的
+                        // 现象）；而他要求焦点停在按钮上 —— 让按钮上的左右键能改难度，
+                        // 两个要求就同时满足了。
+                        modifier = Modifier.onPreviewKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown) {
+                                when (event.key) {
+                                    Key.DirectionLeft -> {
+                                        diffIndex = (diffIndex - 1).coerceAtLeast(0)
+                                        true
+                                    }
+                                    Key.DirectionRight -> {
+                                        diffIndex = (diffIndex + 1)
+                                            .coerceAtMost(Difficulty.entries.size - 1)
+                                        true
+                                    }
+                                    else -> false
+                                }
+                            } else {
+                                false
+                            }
+                        },
                         onClick = {
                             onStart(
                                 sizes[sizeIndex],

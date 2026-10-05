@@ -70,18 +70,100 @@ class GameState(
     val maxUndoCount: Int = DEFAULT_MAX_UNDO,
     /** 时钟。默认走系统时间；测试注入假时钟才能确定性地断言累计时长。 */
     private val clock: () -> Long = System::currentTimeMillis,
+    /**
+     * 贴目（单位：子），默认按尺寸取 [Komi.forSize]。
+     *
+     * 暴露成参数是为了能**实测标定**：9 路的合理贴目没有唯一标准
+     * （小棋盘的先手优势与棋盘大小的换算各地约定不一），
+     * 需要用"同档自战的黑白胜率"扫出平衡点，而不是拍一个数。
+     */
+    /**
+     * 让子数（handicap）。语义见 [Difficulty.handicap]：在星位摆 N 颗**玩家颜色的子**、
+     * AI 先下、不贴目。玩家是受益方，所以他执黑执白都一样。
+     *
+     * ⚠️ 刻意**不**默认从 [difficulty] 取。让子是「对局条件」，不是「AI 强度」：
+     *    · core 层要中立 —— 测试里拿 BEGINNER 当"普通难度"构造对局时，不该凭空多出两颗子；
+     *    · 语义上"让几子"由对局双方约定，与 AI 有多强是两回事（同一档也可以让不同子数）。
+     *    ⇒ 由 app 层开局时显式传 `handicap = difficulty.handicap`。
+     *    （这条是踩出来的：一开始默认从档位取，core 里 10 个既有测试立刻全红。）
+     */
+    val handicap: Int = 0,
+    /**
+     * 贴目（单位：子），默认按尺寸取 [Komi.forSize]。
+     *
+     * ⚠️ **让子不改贴目** —— 这是实测出来的，不是随手定的。
+     *  围棋惯例"让子棋不贴目"是为了让强弱悬殊的双方**打平**，它隐含假设
+     *  "一颗子的价值 >> 贴目"。19 路成立，**9 路不成立**：
+     *  Scorer 判据是 blackMargin > komi*2，所以 komi 3.75 子 ⇒ 黑方须净胜 > 7.5 目；
+     *  把 komi 归零等于一次性替黑方（AI）免掉 7.5 目义务，而白方每颗星位子在
+     *  9 路小盘上的价值远不到 3.75 目 ⇒ 净值是**受让方吃亏**。
+     *  实测（同网同预算，每档 32 局）：受让方 n=1..3 合并胜率 37/96 = 0.385，
+     *  95% Wilson CI [0.294, 0.485]，**统计上显著低于 50%** —— 越让越亏。
+     *  ⇒ 保持标准贴目，让子成为纯粹的、可控的优势，且对执色天然对称
+     *    （子摆给玩家，与玩家执黑执白无关）。
+     *
+     * 暴露成参数是为了能**实测标定**：9 路的合理贴目没有唯一标准
+     * （小棋盘的先手优势与棋盘大小的换算各地约定不一），
+     * 需要用"同档自战的黑白胜率"扫出平衡点，而不是拍一个数。
+     */
+    val komi: Double = Komi.forSize(size),
 ) {
 
     val board: Board = Board(size)
     private val scorer = Scorer(size)
-    val komi: Double = Komi.forSize(size)
+
+    init {
+        // ⚠️ 让子（handicap）：难度的最终旋钮，见 [Difficulty.handicap]。
+        //   围棋惯例是"受益方在星位先摆子，另一方先行，且不贴目"；本 app 里受益方
+        //   = 玩家（孩子），所以摆的是**玩家颜色**的子、由 AI 先下。
+        //   摆的子不进棋谱（_moves）—— 它们是起始局面而非"下过的一手"；
+        //   同时要把 lastMove / koPoint 复位，否则界面会把最后一颗让子显示成"刚下的一手"。
+        if (handicap > 0) {
+            for (idx in handicapPoints(size, handicap)) {
+                board.play(idx % size, idx / size, playerColor)
+            }
+            board.clearLastMove()
+        }
+    }
+
+    /**
+     * 让 N 子的星位（传统顺序：右上 → 左下 → 右下 → 左上 → 天元）。
+     *
+     * 9 路星位距边 2、13 路距边 3，都从棋盘尺寸推导，不写死 ——
+     * 以后加尺寸（如 19 路）时这里不必改。
+     */
+    private fun handicapPoints(size: Int, n: Int): List<Int> {
+        val e = if (size <= 9) 2 else 3
+        val far = size - 1 - e
+        val mid = size / 2
+        // 顺序 = 传统让子顺序：四角星 → 天元 → 四边星，共 9 个。
+        // 为什么需要到 9 个：实测每颗星位子只值约 +4 个百分点的胜率，
+        // 弱档要拉开到"孩子明显能赢"的量级需要 4~5 颗（见 Difficulty.handicap）。
+        return listOf(
+            e * size + far,        // 1 右上角星
+            far * size + e,        // 2 左下角星
+            far * size + far,      // 3 右下角星
+            e * size + e,          // 4 左上角星
+            mid * size + mid,      // 5 天元
+            far * size + mid,      // 6 右边星
+            e * size + mid,        // 7 左边星
+            mid * size + far,      // 8 上边星
+            mid * size + e,        // 9 下边星
+        ).take(n.coerceIn(0, 9))
+    }
 
     /** 棋谱 */
     private val _moves = ArrayList<Move>(size * size / 2)
     val moves: List<Move> get() = _moves
 
-    /** 轮到谁走 */
-    var toMove: Stone = Stone.BLACK
+    /**
+     * 轮到谁走。
+     *
+     * 让子棋由 **AI 先下**（受益方玩家已经在盘上摆了子，见 [handicap]），
+     * 所以这里不能简单写死 BLACK。
+     */
+    var toMove: Stone =
+        if (handicap > 0 && playerColor == Stone.BLACK) Stone.WHITE else Stone.BLACK
         private set
 
     var isOver: Boolean = false
@@ -108,6 +190,19 @@ class GameState(
     val isAiTurn: Boolean get() = !isOver && toMove == aiColor
 
     private var consecutivePasses = 0
+
+    /**
+     * 双方是否**各自**停过至少一手。
+     *
+     * ⚠️ 为什么需要（2026-10-05 实测的"不终局"缺陷）：
+     * 光看连续停手是不够的 —— 双方各用**自己的候选池**判断该不该收工，判据未必一致，
+     * 于是会出现**交替停手**：黑停→白下→黑下→白停→黑停→白下…
+     * `consecutivePasses` 永远只有 1，对局到不了终点（实测 400 手上限、停手 26 次、
+     * 最长连停 1；60 局里有 3% 是这种局）。
+     * 配上"空点已很少"就能正确收工：两边都表过收工意图、盘上又没什么可争的了。
+     */
+    private var blackPassed = false
+    private var whitePassed = false
     private var startedAt: Long = clock()
 
     /** 当前这一手是从什么时候开始算的（用于分边累计思考时长）。 */
@@ -136,6 +231,9 @@ class GameState(
         val whiteCaptured: Int,
         val toMove: Stone,
         val consecutivePasses: Int,
+        /** 双方各自的"停过手"标记，必须跟着悔棋回退（否则悔棋后可能被误判为终局）。 */
+        val blackPassed: Boolean,
+        val whitePassed: Boolean,
         val blackThinkMs: Long,
         val whiteThinkMs: Long,
         val turnStartedAt: Long,
@@ -151,6 +249,8 @@ class GameState(
         result = null
         undoCount = 0
         consecutivePasses = 0
+        blackPassed = false
+        whitePassed = false
         startedAt = clock()
         turnStartedAt = startedAt
         blackThinkMs = 0
@@ -215,8 +315,17 @@ class GameState(
         recordThinkTime(color)
         _moves.add(Move(index = PASS_INDEX, color = color, capturedCount = 0))
         consecutivePasses++
+        if (color == Stone.BLACK) blackPassed = true else whitePassed = true
 
-        if (consecutivePasses >= 2) {
+        // 终局条件：
+        //   ① 双方连续停手（标准）
+        //   ② 双方各自都停过手 + 空点已很少（收拾"交替停手"的死循环，见字段注释）
+        //     空点阈值取棋盘点数的 10%：9 路=8 点、13 路=16 点，都是真终局的量级，
+        //     不会把"还有大官子可争"的局面误判成终局。
+        val empties = board.cells.count { it.toInt() == 0 }
+        if (consecutivePasses >= 2 ||
+            (blackPassed && whitePassed && empties <= size * size / 10)
+        ) {
             finishByScoring()
         } else {
             toMove = toMove.opponent
@@ -243,6 +352,15 @@ class GameState(
         _moves.add(Move(index = index, color = color, capturedCount = capturedCount))
         consecutivePasses = 0
         toMove = toMove.opponent
+
+        // 兜底：手数达到上限就强制数子结算。
+        // 为什么需要（2026-10-05 实测）：收工判据收紧到"空点 ≤15%"之后，大部分对局能正常
+        // 收工，但仍有约 10% 的局在"提子-填子"里循环、打到手数上限下不完
+        // （9 路只有 81 点，却下了 215 手）。这道兜底与判据无关，只保证对局**必然有终点**。
+        // 取点数的 1.6 倍（9 路=129 手、13 路=270 手）：正常终局远在它之前。
+        if (!isOver && _moves.size >= size * size * 16 / 10) {
+            finishByScoring()
+        }
     }
 
     // ===============================================================
@@ -271,6 +389,8 @@ class GameState(
                 whiteCaptured = board.whiteCaptured,
                 toMove = toMove,
                 consecutivePasses = consecutivePasses,
+                blackPassed = blackPassed,
+                whitePassed = whitePassed,
                 blackThinkMs = blackThinkMs,
                 whiteThinkMs = whiteThinkMs,
                 turnStartedAt = turnStartedAt,
@@ -288,6 +408,8 @@ class GameState(
         )
         toMove = snapshot.toMove
         consecutivePasses = snapshot.consecutivePasses
+        blackPassed = snapshot.blackPassed
+        whitePassed = snapshot.whitePassed
         blackThinkMs = snapshot.blackThinkMs
         whiteThinkMs = snapshot.whiteThinkMs
         // 悔棋后重新计时：刚恢复的这一手从「现在」开始算，

@@ -1,6 +1,8 @@
 package com.heizhu.weiqi.core.game
 
 import com.heizhu.weiqi.core.ai.Difficulty
+import com.heizhu.weiqi.core.rules.Komi
+import com.heizhu.weiqi.core.rules.Point
 import com.heizhu.weiqi.core.rules.Stone
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -21,6 +23,64 @@ class GameStateTest {
         player: Stone = Stone.BLACK,
         maxUndo: Int = 5,
     ) = GameState(size, Difficulty.BEGINNER, player, maxUndo)
+
+    // ===============================================================
+    // 终局判定
+    // ===============================================================
+
+    /**
+     * 双方**交替**停手时也必须能终局。
+     *
+     * 实测缺陷（2026-10-05，产品口径自战）：双方各用**自己的候选池**判断该不该收工，
+     * 判据未必一致，于是出现「黑停 → 白下 → 黑下 → 白停 → 黑停 → 白下 …」，
+     * `consecutivePasses` 永远是 1，对局永远到不了终点
+     * （60 局里 3% 打满 400 手，停手 26 次、最长连停 1）。
+     * 期望：双方都停过手 + 空点已很少 ⇒ 终局。
+     */
+    @Test
+    fun alternatingPassesStillFinishOnceBoardIsSettled() {
+        val g = game()
+        // 直接摆一个"几乎下满"的局面（用 Board.restoreFrom），而不是靠模拟对局填：
+        // 顺序填充会不断触发自杀被拒，填不满（第一版用例就栽在这里：实际剩 40 个空点）。
+        // 摆法：棋盘格交替 + 右下角留 2×3 共 6 个**相邻**空点
+        // （留成一块是为了让"白方下一手"有气、不会被判自杀）。
+        val cells = ByteArray(81)
+        for (y in 0 until 9) {
+            for (x in 0 until 9) {
+                if (x >= 7 && y >= 6) continue                  // 右下 2×3 留空
+                cells[y * 9 + x] = if ((x + y) % 2 == 0) 1 else 2
+            }
+        }
+        g.board.restoreFrom(cells, koPoint = -1, lastMove = g.board.lastMove, blackCaptured = 0, whiteCaptured = 0)
+        val empties = g.board.cells.count { it.toInt() == 0 }
+        assertTrue("应只剩很少空点，实际 $empties", empties in 1..8)
+
+        // 黑先停一手：只有黑停过 ⇒ 不该终局
+        assertTrue(g.passMove(Stone.BLACK) is MoveOutcome.Ok)
+        assertFalse("只有一方停过手，不该终局", g.isOver)
+
+        // 白不配合收工、落一子（落在留出的空块里，有气，合法）
+        val empty = (0 until 81).first { g.board.cells[it].toInt() == 0 }
+        assertTrue("白方应能落子", g.play(empty % 9, empty / 9, Stone.WHITE) is MoveOutcome.Ok)
+        // 黑再停一手 —— 仍只有黑停过 ⇒ 不终局（验证"交替停手"不误判）
+        assertTrue(g.passMove(Stone.BLACK) is MoveOutcome.Ok)
+        assertFalse("白方还没停过手，不该终局", g.isOver)
+
+        // 白也停一手 ⇒ 双方都表过收工意图、空点又少 ⇒ 必须终局
+        assertTrue(g.passMove(Stone.WHITE) is MoveOutcome.Ok)
+        assertTrue("双方都停过手且盘面已定型 ⇒ 必须终局", g.isOver)
+        assertNotNull(g.result)
+    }
+
+    @Test
+    fun restartClearsPassedFlags() {
+        // 重开必须把"停过手"标记清掉，否则新一局可能被误判为终局
+        val g = game()
+        g.passMove(Stone.BLACK)
+        g.restart()
+        assertFalse(g.isOver)
+        assertEquals(Stone.BLACK, g.toMove)
+    }
 
     // ===============================================================
     // 回合
@@ -324,4 +384,67 @@ class GameStateTest {
         assertEquals(0L, g.thinkMs(Stone.WHITE))
         assertEquals(0L, g.elapsedMs)
     }
+
+    // ────────────────────────────────────────────────────────────────
+    // 让子（handicap）—— 难度阶梯的最终旋钮，见 Difficulty.handicap
+    // ⚠️ 本项目用 JUnit4：assertXxx 的 message 是**第一个**参数
+    // ────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `让子：在星位摆玩家颜色的子，AI 先下，且不贴目`() {
+        val g = GameState(9, Difficulty.ENTRY, Stone.BLACK, handicap = 5)
+        assertEquals("让 5 子：玩家（黑）应有 5 子", 5, g.board.countStones(Stone.BLACK))
+        assertEquals("AI 侧不应有子", 0, g.board.countStones(Stone.WHITE))
+        assertEquals("让子后应由 AI（执白）先下", Stone.WHITE, g.toMove)
+        // 让子**不**改贴目。曾经的写法是归零（围棋惯例），实测发现那在 9 路小盘上
+        // 反过来补偿 AI：受让方 n=1..3 合并胜率 0.385，CI[0.294,0.485] 显著低于 50%。
+        assertEquals("让子不应改变贴目（实测：归零会让 AI 占便宜）",
+            Komi.forSize(9), g.komi, 1e-9)
+    }
+
+    @Test
+    fun `让子不进棋谱，且不污染最后一手与打劫点`() {
+        val g = GameState(9, Difficulty.ENTRY, Stone.BLACK, handicap = 5)
+        assertEquals("让子属于起始局面，不该记成「下过的棋」", 0, g.moves.size)
+        assertEquals("否则界面会把最后一颗让子显示成「AI 刚下的一手」", Point.PASS, g.board.lastMove)
+        assertEquals(-1, g.board.koPoint)
+    }
+
+    @Test
+    fun `玩家执白时，让子摆白子且由黑（AI）先下`() {
+        val g = GameState(9, Difficulty.BEGINNER, Stone.WHITE, handicap = 3)
+        assertEquals("受益方永远是玩家（孩子常换执色）", 3, g.board.countStones(Stone.WHITE))
+        assertEquals(Stone.BLACK, g.toMove)
+    }
+
+    @Test
+    fun `高档不让子：空盘、玩家先下、正常贴目`() {
+        for (d in listOf(Difficulty.ADVANCED, Difficulty.MASTER)) {
+            val g = GameState(9, d, Stone.BLACK)
+            assertEquals("${d.displayName} 不该让子", 0, g.board.countStones(Stone.BLACK))
+            assertEquals(Stone.BLACK, g.toMove)
+            assertTrue("${d.displayName} 应走正常贴目", g.komi > 0)
+        }
+    }
+
+    @Test
+    fun `13 路让子也落在星位上`() {
+        val g = GameState(13, Difficulty.ENTRY, Stone.BLACK, handicap = 5)
+        assertEquals(5, g.board.countStones(Stone.BLACK))
+        assertEquals("13 路右上是 (9,3)", Stone.BLACK, g.board.stoneAt(x = 9, y = 3))
+    }
+
+    @Test
+    fun `让 9 子用满九个星位，且不越界`() {
+        val g = GameState(9, Difficulty.ENTRY, Stone.BLACK, handicap = 9)
+        assertEquals("9 路最多 9 颗（4 角 + 天元 + 4 边星）", 9, g.board.countStones(Stone.BLACK))
+        assertTrue("天元应在盘上", g.board.stoneAt(x = 4, y = 4) == Stone.BLACK)
+    }
+
+    @Test
+    fun `让子数超过星位数时不会重复落子或崩溃`() {
+        val g = GameState(9, Difficulty.ENTRY, Stone.BLACK, handicap = 99)
+        assertEquals("只能落到 9 个星位为止", 9, g.board.countStones(Stone.BLACK))
+    }
+
 }

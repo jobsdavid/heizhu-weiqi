@@ -5,7 +5,7 @@
   {
    "name": "stem.w",
    "shape": [
-    32,
+    16,
     3,
     3,
     3
@@ -15,94 +15,94 @@
   {
    "name": "stem.b",
    "shape": [
-    32
+    16
    ],
-   "offset": 864
+   "offset": 432
   },
   {
    "name": "block0.c1.w",
    "shape": [
-    32,
-    32,
+    16,
+    16,
     3,
     3
    ],
-   "offset": 896
+   "offset": 448
   },
   {
    "name": "block0.c1.b",
    "shape": [
-    32
+    16
    ],
-   "offset": 10112
+   "offset": 2752
   },
   {
    "name": "block0.c2.w",
    "shape": [
-    32,
-    32,
+    16,
+    16,
     3,
     3
    ],
-   "offset": 10144
+   "offset": 2768
   },
   {
    "name": "block0.c2.b",
    "shape": [
-    32
+    16
    ],
-   "offset": 19360
+   "offset": 5072
   },
   {
    "name": "block1.c1.w",
    "shape": [
-    32,
-    32,
+    16,
+    16,
     3,
     3
    ],
-   "offset": 19392
+   "offset": 5088
   },
   {
    "name": "block1.c1.b",
    "shape": [
-    32
+    16
    ],
-   "offset": 28608
+   "offset": 7392
   },
   {
    "name": "block1.c2.w",
    "shape": [
-    32,
-    32,
+    16,
+    16,
     3,
     3
    ],
-   "offset": 28640
+   "offset": 7408
   },
   {
    "name": "block1.c2.b",
    "shape": [
-    32
+    16
    ],
-   "offset": 37856
+   "offset": 9712
   },
   {
    "name": "pconv.w",
    "shape": [
     16,
-    32,
+    16,
     1,
     1
    ],
-   "offset": 37888
+   "offset": 9728
   },
   {
    "name": "pconv.b",
    "shape": [
     16
    ],
-   "offset": 38400
+   "offset": 9984
   },
   {
    "name": "pout.w",
@@ -112,31 +112,31 @@
     1,
     1
    ],
-   "offset": 38416
+   "offset": 10000
   },
   {
    "name": "pout.b",
    "shape": [
     1
    ],
-   "offset": 38432
+   "offset": 10016
   },
   {
    "name": "vconv.w",
    "shape": [
     8,
-    32,
+    16,
     1,
     1
    ],
-   "offset": 38433
+   "offset": 10017
   },
   {
    "name": "vconv.b",
    "shape": [
     8
    ],
-   "offset": 38689
+   "offset": 10145
   },
   {
    "name": "vfc1.w",
@@ -144,14 +144,14 @@
     64,
     648
    ],
-   "offset": 38697
+   "offset": 10153
   },
   {
    "name": "vfc1.b",
    "shape": [
     64
    ],
-   "offset": 80169
+   "offset": 51625
   },
   {
    "name": "vfc2.w",
@@ -159,17 +159,17 @@
     1,
     64
    ],
-   "offset": 80233
+   "offset": 51689
   },
   {
    "name": "vfc2.b",
    "shape": [
     1
    ],
-   "offset": 80297
+   "offset": 51753
   }
  ],
- "bytes": 321192,
+ "bytes": 207016,
  "value_scale": 10.0,
- "k_winrate": 0.21588196805794968
+ "k_winrate": 0.1639018117012445
 }

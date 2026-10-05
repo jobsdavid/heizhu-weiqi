@@ -3,6 +3,8 @@ package com.heizhu.weiqi.bench
 import com.heizhu.weiqi.core.ai.Difficulty
 import com.heizhu.weiqi.core.ai.MctsEngine
 import com.heizhu.weiqi.core.ai.PolicyValueNet
+import com.heizhu.weiqi.core.game.GameState
+import com.heizhu.weiqi.core.game.MoveOutcome
 import java.io.File
 import com.heizhu.weiqi.core.rules.Board
 import com.heizhu.weiqi.core.rules.PlayOutcome
@@ -43,7 +45,9 @@ fun main() {
                 "quit" -> return
                 "genmove" -> out.println(genmove(t))
                 "selfplay" -> out.println(selfplay(t))
+                "appmatch" -> out.println(appMatch(t))
                 "netbench" -> out.println(netBench(t))
+                "netcheck" -> out.println(netCheck(t))
                 "score" -> out.println(scoreGame(t))
                 else -> out.println("err unknown-command ${t[0]}")
             }
@@ -89,11 +93,11 @@ private fun parseBoard(size: Int, movesSpec: String): Board {
  * 设了它，评测跑的就是「网络引导」路径；不设则跑原来的随机 rollout 路径 ——
  * 这样同一套评测台能把两条路径放在同一批局面上对照，这是验收的核心手段。
  */
-private fun loadNet(): PolicyValueNet? {
-    val path = System.getenv("WEIQI_NET") ?: return null
+private fun loadNet(envVar: String = "WEIQI_NET"): PolicyValueNet? {
+    val path = System.getenv(envVar) ?: return null
     val bin = File(path)
     val manifest = File(path.removeSuffix(".bin") + ".json")
-    check(bin.isFile) { "WEIQI_NET 指向的文件不存在：$path" }
+    check(bin.isFile) { "$envVar 指向的文件不存在：$path" }
     check(manifest.isFile) { "缺少 manifest：${manifest.path}" }
     val net = PolicyValueNet.load(manifest.readText(), bin.readBytes())
     System.err.println("已加载网络 $path（${bin.length() / 1024} KB）")
@@ -115,6 +119,28 @@ private fun difficultyOf(raw: String): Difficulty {
 private fun tvPlayoutCap(difficulty: Difficulty): Int? {
     val rate = System.getenv("WEIQI_TV_RATE")?.toDoubleOrNull() ?: return null
     return (difficulty.timeBudgetMs * rate / 1000.0).toInt().coerceAtLeast(1)
+}
+
+/**
+ * 跨实现一致性检查：`netcheck <size> <toMove> <cells>`
+ *   cells = 逗号分隔的 size*size 个 0/1/2（与 Board.cells 同序）
+ *
+ * 输出网络输出摘要（策略和 / 价值 / 前 10 个策略值），供与 PyTorch 侧逐项比对。
+ *
+ * ⚠️ 为什么必须有：端侧手写前向曾**漏写一个 relu** 导致输出全错 ——
+ * 权重与 manifest 逐字节一致、残差块也都在，肉眼根本看不出来，
+ * 最后靠"把 Kotlin 逐行搬成 Python、对同一输入跑前向比输出"才定位到。
+ * 凡改动**输入构造**（如本轮视角统一）或前向实现，必须重跑本检查。
+ */
+private fun netCheck(t: List<String>): String {
+    val size = t[1].toInt()
+    val toMove = t[2].toByte()
+    val cells = t[3].split(",").map { it.trim().toInt().toByte() }.toByteArray()
+    val net = loadNet() ?: return "err 没有设置 WEIQI_NET"
+    val e = net.evaluate(cells, toMove)
+    val top = e.policy.withIndex().sortedByDescending { it.value }.take(10)
+        .joinToString(" ") { "${it.index}:${"%.6f".format(it.value)}" }
+    return "sum=${"%.6f".format(e.policy.sum())} value=${"%.6f".format(e.scoreLead)} top=$top"
 }
 
 /**
@@ -171,7 +197,7 @@ private fun genmove(t: List<String>): String {
     val spec = if (t.size > 5) t.drop(5).joinToString(" ") else "-"
     val board = parseBoard(size, spec)
     val cap = tvPlayoutCap(diff)
-    val engine = MctsEngine(size, net = loadNet())
+    val engine = MctsEngine(size, net = loadNet(), judgeNet = loadNet("WEIQI_JUDGE_NET"))
     // 可选：用环境变量覆盖「AI 最长思考时间」（对应 app 设置里那一项）。
     // 有了它才能**实测**那个设置是否真的改变搜索量 —— 否则只能在电视上靠感觉。
     val budgetMs = System.getenv("WEIQI_THINK_MS")?.toLongOrNull()
@@ -186,7 +212,7 @@ private fun selfplay(t: List<String>): String {
     val diff = difficultyOf(t[2])
     val plies = t[3].toInt()
     val seed = t.getOrNull(4)?.toLongOrNull() ?: 1L
-    val engine = MctsEngine(size, net = loadNet())
+    val engine = MctsEngine(size, net = loadNet(), judgeNet = loadNet("WEIQI_JUDGE_NET"))
     val board = Board(size)
     var color = Stone.BLACK
     val moves = ArrayList<String>(plies)
@@ -206,4 +232,162 @@ private fun selfplay(t: List<String>): String {
         color = color.opponent
     }
     return moves.joinToString(" ")
+}
+
+/**
+ * **"醉汉模拟"档**：完全不懂围棋的对手 —— 见子就吃，否则随机落子。
+ *
+ * 为什么需要它（2026-10-05）：用户反馈"一个不会下围棋的醉汉都能赢 9 路中级"。
+ * 而该档对 KataGo 每手只丢 1.5 目（≈业余低段），照理不该被新手赢。
+ * ⇒ 说明存在"行为缺陷"而非棋力不足。这个档用来把缺陷暴露出来：
+ *   如果随机乱下 + 贪婪吃子能赢 AI，就说明 AI 在某些局面会白送大块。
+ *
+ * 返回 -1 表示停一手（沿用引擎的约定）。
+ */
+private fun drunkardMove(state: GameState, rng: java.util.Random): Int {
+    val size = state.size
+    val color = state.toMove
+    val empties = (0 until size * size).filter { state.board.cells[it].toInt() == 0 }
+    if (empties.isEmpty()) return -1
+
+    // 试探性落子：返回"提掉的子数"，-1 表示非法（自杀/劫）
+    fun tryPlay(idx: Int): Int {
+        val probe = Board(size)
+        probe.restoreFrom(state.board.cells, state.board.koPoint, state.board.lastMove,
+            state.board.blackCaptured, state.board.whiteCaptured)
+        val before = if (color == Stone.BLACK) probe.whiteCaptured else probe.blackCaptured
+        if (probe.play(idx % size, idx / size, color) !is PlayOutcome.Ok) return -1
+        val after = if (color == Stone.BLACK) probe.whiteCaptured else probe.blackCaptured
+        return after - before
+    }
+
+    // ⚠️ 必须只选合法点：否则一遇到自杀点就产生非法手、整个对局被评测台判废
+    val legal = empties.filter { tryPlay(it) >= 0 }
+    if (legal.isEmpty()) return -1
+    val capturing = legal.filter { tryPlay(it) > 0 }        // 新手最直观的行为：见子就吃
+    return if (capturing.isNotEmpty()) capturing[rng.nextInt(capturing.size)]
+    else legal[rng.nextInt(legal.size)]
+}
+
+/**
+ * 贴近 app 真实流程的对局探针（与 selfplay 的关键差别）。
+ *
+ * · 用产品代码的 [GameState] 推进对局 —— 它带着**真实的终局判定**
+ *   （双方连续停手 → 数子结算），这正是 selfplay 缺的一环。
+ * · 所以它数出来的「停手」「被吃光」是**产品口径**的，不是测量假象。
+ *   ⚠️ 2026-10-05 的教训：selfplay 不判终局、一直跑到手数上限，据此数出的
+ *   "连停 200 手"把我带偏了一整天 —— 判据口径错了，后面所有改动都是白工。
+ *
+ * 命令： `appmatch <size> <tierA> <tierB> <seed> [maxPlies]`
+ *   网络： A 用 `WEIQI_NET`；B 用 `WEIQI_NET_B`（不设则同 A）；终局裁判用 `WEIQI_JUDGE_NET`
+ *   A/B 的执色按 seed 奇偶交替 —— 同档对局两边机会必须均等，否则测不出颜色偏差。
+ * 输出： 一行 JSON（结构化，不靠 grep 日志；抓不到就是抓不到，不会静默读空）
+ */
+private fun appMatch(t: List<String>): String {
+    val size = t[1].toInt()
+    val tierA = t[2]
+    val tierB = t[3]
+    // "drunkard" = 醉汉模拟档（见 drunkardMove）：用来验证"不会下棋的人能否赢"
+    val aDrunk = tierA == "drunkard"
+    val bDrunk = tierB == "drunkard"
+    val diffA = if (aDrunk) Difficulty.ENTRY else difficultyOf(tierA)
+    val diffB = if (bDrunk) Difficulty.ENTRY else difficultyOf(tierB)
+    val seed = t.getOrNull(4)?.toLongOrNull() ?: 1L
+    val maxPlies = t.getOrNull(5)?.toIntOrNull() ?: 400
+    // 开局随机手数（**测试专用**，见下方注释）。默认 0 = 不随机。
+    val openRand = t.getOrNull(6)?.toIntOrNull() ?: 0
+
+    val netA = loadNet()
+    val netB = loadNet("WEIQI_NET_B") ?: netA
+    val judge = loadNet("WEIQI_JUDGE_NET")
+
+    val aBlack = seed % 2 == 0L
+    val komiOverride = t.getOrNull(7)?.toDoubleOrNull()
+    // 让子数（t[8]，默认 0）：给**白方**摆 N 颗星位子。因为两边用同一个网络时，
+    // 白方胜率就直接读出了「让 N 子」等价多少胜率 —— 这是档位阶梯唯一可靠的标尺，
+    // 比"换弱网络/少搜几步"那三条轴的信噪比高一个量级（那三条轴的效应都小于测量噪声）。
+    val handicap = t.getOrNull(8)?.toIntOrNull() ?: 0
+    val state = if (komiOverride != null) {
+        GameState(size, diffA, Stone.WHITE, komi = komiOverride, handicap = handicap)
+    } else {
+        GameState(size, diffA, Stone.WHITE, handicap = handicap)
+    }
+    val engineA = MctsEngine(size, net = netA, judgeNet = judge)
+    val engineB = MctsEngine(size, net = netB, judgeNet = judge)
+
+    // ⚠️ 开局随机化：档位温度归零（去放水）之后，引擎对同一局面恒走同一手 ——
+    // 于是自战 24 局会走出**完全相同的棋**（实测 24 局比分与手数全同），
+    // 拿它测"黑白公平性"等于只下了一盘。
+    // 开局随机几手即可产生互不相同的对局，而这不改变中后盘的棋力测量口径
+    // （产品里对手是孩子，本来就不存在"相同局面"）。
+    if (openRand > 0) {
+        val r = java.util.Random(seed * 7919L + 13L)
+        var played = 0
+        var guard = 0
+        while (played < openRand && !state.isOver && guard < openRand * 50) {
+            guard++
+            val legal = (0 until size * size).filter { state.board.cells[it].toInt() == 0 }
+            if (legal.isEmpty()) break
+            val mv = legal[r.nextInt(legal.size)]
+            if (state.play(mv, state.toMove) is MoveOutcome.Ok) {
+                played++
+            }
+        }
+    }
+
+    var plies = 0
+    var passes = 0
+    var consec = 0
+    var maxConsec = 0
+    var illegal = false
+    while (!state.isOver && plies < maxPlies) {
+        val color = state.toMove
+        val isA = (color == Stone.BLACK) == aBlack
+        val engine = if (isA) engineA else engineB
+        val diff = if (isA) diffA else diffB
+        val isDrunk = if (isA) aDrunk else bDrunk
+        val mv = if (isDrunk) {
+            drunkardMove(state, java.util.Random(seed * 1000 + plies))
+        } else {
+            runBlocking {
+                engine.findBestMove(state.board, color, diff, Random(seed * 1000 + plies))
+            }
+        }
+        val outcome = if (mv < 0) state.passMove(color) else state.play(mv, color)
+        if (outcome !is MoveOutcome.Ok) {
+            illegal = true            // 引擎给了非法手：显式暴露，不静默
+            break
+        }
+        if (mv < 0) {
+            passes++; consec++
+            if (consec > maxConsec) maxConsec = consec
+        } else {
+            consec = 0
+        }
+        plies++
+    }
+
+    val res = state.result
+    val winner = when (res?.winner) {
+        Stone.BLACK -> if (aBlack) "A" else "B"
+        Stone.WHITE -> if (aBlack) "B" else "A"
+        else -> "none"
+    }
+    return buildString {
+        append("{")
+        append("\"size\":").append(size)
+        append(",\"tierA\":\"").append(tierA).append("\"")
+        append(",\"tierB\":\"").append(tierB).append("\"")
+        append(",\"seed\":").append(seed)
+        append(",\"aBlack\":").append(aBlack)
+        append(",\"ended\":").append(state.isOver)
+        append(",\"illegal\":").append(illegal)
+        append(",\"plies\":").append(plies)
+        append(",\"passes\":").append(passes)
+        append(",\"maxConsecPass\":").append(maxConsec)
+        append(",\"winner\":\"").append(winner).append("\"")
+        append(",\"blackMargin\":").append(res?.score?.blackMargin ?: 0)
+        append(",\"komi\":").append(state.komi)
+        append("}")
+    }
 }

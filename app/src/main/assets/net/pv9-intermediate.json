@@ -88,6 +88,74 @@
    "offset": 37856
   },
   {
+   "name": "block2.c1.w",
+   "shape": [
+    32,
+    32,
+    3,
+    3
+   ],
+   "offset": 37888
+  },
+  {
+   "name": "block2.c1.b",
+   "shape": [
+    32
+   ],
+   "offset": 47104
+  },
+  {
+   "name": "block2.c2.w",
+   "shape": [
+    32,
+    32,
+    3,
+    3
+   ],
+   "offset": 47136
+  },
+  {
+   "name": "block2.c2.b",
+   "shape": [
+    32
+   ],
+   "offset": 56352
+  },
+  {
+   "name": "block3.c1.w",
+   "shape": [
+    32,
+    32,
+    3,
+    3
+   ],
+   "offset": 56384
+  },
+  {
+   "name": "block3.c1.b",
+   "shape": [
+    32
+   ],
+   "offset": 65600
+  },
+  {
+   "name": "block3.c2.w",
+   "shape": [
+    32,
+    32,
+    3,
+    3
+   ],
+   "offset": 65632
+  },
+  {
+   "name": "block3.c2.b",
+   "shape": [
+    32
+   ],
+   "offset": 74848
+  },
+  {
    "name": "pconv.w",
    "shape": [
     16,
@@ -95,14 +163,14 @@
     1,
     1
    ],
-   "offset": 37888
+   "offset": 74880
   },
   {
    "name": "pconv.b",
    "shape": [
     16
    ],
-   "offset": 38400
+   "offset": 75392
   },
   {
    "name": "pout.w",
@@ -112,14 +180,14 @@
     1,
     1
    ],
-   "offset": 38416
+   "offset": 75408
   },
   {
    "name": "pout.b",
    "shape": [
     1
    ],
-   "offset": 38432
+   "offset": 75424
   },
   {
    "name": "vconv.w",
@@ -129,14 +197,14 @@
     1,
     1
    ],
-   "offset": 38433
+   "offset": 75425
   },
   {
    "name": "vconv.b",
    "shape": [
     8
    ],
-   "offset": 38689
+   "offset": 75681
   },
   {
    "name": "vfc1.w",
@@ -144,14 +212,14 @@
     64,
     648
    ],
-   "offset": 38697
+   "offset": 75689
   },
   {
    "name": "vfc1.b",
    "shape": [
     64
    ],
-   "offset": 80169
+   "offset": 117161
   },
   {
    "name": "vfc2.w",
@@ -159,17 +227,17 @@
     1,
     64
    ],
-   "offset": 80233
+   "offset": 117225
   },
   {
    "name": "vfc2.b",
    "shape": [
     1
    ],
-   "offset": 80297
+   "offset": 117289
   }
  ],
- "bytes": 321192,
+ "bytes": 469160,
  "value_scale": 10.0,
- "k_winrate": 0.21588196805794968
+ "k_winrate": 0.16468475890212342
 }

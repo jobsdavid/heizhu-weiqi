@@ -88,6 +88,18 @@ class Board(val size: Int) {
      *
      * 光标悬停在棋盘上时调用，用于实时显示「提 2 子」/「打劫，不能提回」等提示。
      */
+    /**
+     * 清掉「最后一手」与打劫点。
+     *
+     * 给「让子」用：让子的棋子是通过 [play] 摆上去的，但它们是**起始局面**而不是
+     * 某人刚下的一手。不清掉的话界面会把最后一颗让子显示成「AI 刚下的」，而且
+     * 那颗子周围会凭空出现打劫限制。
+     */
+    fun clearLastMove() {
+        lastMove = Point.PASS
+        koPoint = -1
+    }
+
     fun preview(x: Int, y: Int, color: Stone): PlayOutcome =
         tryPlay(x, y, color, commit = false)
 

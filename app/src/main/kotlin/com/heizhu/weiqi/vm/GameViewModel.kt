@@ -163,13 +163,24 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
             size = boardSize,
             difficulty = difficulty,
             playerColor = playerColor,
+            // 让子（handicap）：难度阶梯的**确定性**旋钮 —— 在星位给玩家摆 N 子、AI 先下、不贴目。
+            // 为什么不用"弱网络"做阶梯：容量/数据量/搜索量三条轴实测都不单调（差异小于测量噪声）；
+            // 而让子是把目差分布的**均值**平移一个确定量，信噪比完全不同。详见 Difficulty.handicap。
+            handicap = difficulty.handicap,
         )
         game = state
         // 有蒸馏网络就用「网络引导」路径（9 路），没有就回退随机 rollout。
         // 回退是刻意的：网络文件缺失/解析失败都不能影响 app 可用性。
         // **按难度档取网**：阶梯是靠网络强弱实现的（弱网 = 入门，最强网 = 大师），
         // 传难度 id 才能拿到对应的那一个。
-        engine = MctsEngine(boardSize, net = NetAssets.load(getApplication(), boardSize, difficulty.id))
+        engine = MctsEngine(
+            boardSize,
+            net = NetAssets.load(getApplication(), boardSize, difficulty.id),
+            // 终局裁判统一用最强的「大师」档权重：**裁判要准，棋手可以弱**。
+            // 低档网络的价值头太粗（见过它给出"对方走什么我的目差都不变"），
+            // 拿它当裁判会让 AI 一路停手被吃光。详见 MctsEngine.judgeNet 的注释。
+            judgeNet = NetAssets.load(getApplication(), boardSize, Difficulty.MASTER.id),
+        )
         // 记住这一局用的三项设置，下次进「新对局」直接带出来（见 SettingsStore 注释）
         settings.lastBoardSize = boardSize
         settings.lastDifficultyId = difficulty.id
@@ -361,7 +372,7 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
             _ui.value = _ui.value.copy(thinking = true)
             val move = withContext(Dispatchers.Default) {
                 engineRef.findBestMove(state.board, state.playerColor, state.difficulty, searchRandom,
-                        timeBudgetOverrideMs = settings.aiThinkMs)
+                        timeBudgetOverrideMs = minOf(state.difficulty.timeBudgetMs, settings.aiThinkMs))
             }
             if (move >= 0) {
                 val x = move % state.size
@@ -392,7 +403,7 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val move = withContext(Dispatchers.Default) {
                     engineRef.findBestMove(state.board, state.aiColor, state.difficulty, searchRandom,
-                        timeBudgetOverrideMs = settings.aiThinkMs)
+                        timeBudgetOverrideMs = minOf(state.difficulty.timeBudgetMs, settings.aiThinkMs))
                 }
                 logSearchStats(engineRef, state)
                 val aiPassed = move < 0
@@ -410,7 +421,7 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
                     // 对方停一手时给一句明确的话 —— 否则孩子只会看到「没落子」，
                     // 不知道轮到自己、也不知道可以跟着停手收工
                     _ui.value = _ui.value.copy(
-                        toast = "黑猪大人停了一手 —— 你也按菜单键「停一手」就能收工数子",
+                        toast = "黑猪大人停了一手 —— 你也长按返回键选「停一手」就能收工数子",
                     )
                 }
                 if (state.isOver) onGameFinished()
