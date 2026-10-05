@@ -101,7 +101,7 @@ enum class Difficulty(
     ENTRY(
         id = "entry",
         displayName = "入门",
-        description = "让你 5 子 · 刚学会规则就能赢",
+        description = "会犯错的对手 · 刚学会规则就能赢",
         timeBudgetMs = 300,
         maxPlayouts = 300,
         temperature = 0f,     // 去放水：不再按价值随机采样（原 1.2）
@@ -115,7 +115,7 @@ enum class Difficulty(
     BEGINNER(
         id = "beginner",
         displayName = "初级",
-        description = "让你 3 子 · 会吃子会逃跑，但会露破绽",
+        description = "会吃子、会逃跑 · 贪吃但会露破绽",
         timeBudgetMs = 600,
         maxPlayouts = 1_200,
         temperature = 0f,     // 去放水（原 0.7）
@@ -129,7 +129,7 @@ enum class Difficulty(
     INTERMEDIATE(
         id = "intermediate",
         displayName = "中级",
-        description = "让你 2 子 · 有基本战术，要认真下",
+        description = "有基本战术 · 需要认真下才能赢",
         timeBudgetMs = 1_200,
         maxPlayouts = 3_000,
         temperature = 0f,     // 去放水（原 0.35）
@@ -143,7 +143,7 @@ enum class Difficulty(
     ADVANCED(
         id = "advanced",
         displayName = "高级",
-        description = "让你 1 子 · 有全局观，经营实地和外势",
+        description = "有全局观 · 会经营实地和外势",
         timeBudgetMs = 2_000,
         maxPlayouts = 8_000,
         temperature = 0f,     // 去放水（原 0.15）
@@ -161,7 +161,7 @@ enum class Difficulty(
         // 之前写的是「全力应战 · 9 路盘上不好惹」，结果在 13 路设置页上
         // 明晃晃地说着 9 路 —— 真机核对时发现。
         // 需要区分尺寸的文案走 [descriptionFor]。
-        description = "不让子 · 全力应战，不给机会",
+        description = "全力应战 · 不给机会",
         // 上限 15 秒：思考久一点不影响体验，15 秒是可接受的等待上限。
         //
         // 这条预算的意义**取决于走哪条路径**，别混：
@@ -193,10 +193,18 @@ enum class Difficulty(
      * 大师档在 9 路上确实凶；13 路上它算得浅一些（棋盘大了，同样的时间能算的点更少）。
      * 这话得跟着尺寸说才对。
      */
-    fun descriptionFor(boardSize: Int): String = when {
-        this != MASTER -> description
-        boardSize <= 9 -> "全力应战 · 9 路盘上不好惹"
-        else -> "全力应战 · ${boardSize} 路盘上它算不太深，但仍会咬人"
+    fun descriptionFor(boardSize: Int): String {
+        // 让子是难度阶梯的主要旋钮，每一档都必须把它说清楚。
+        // ⚠️ 只在这一处拼：文案与让子数若是两个源，迟早会不一致 ——
+        //    曾经踩过：改了 description，而大师档走的是下面这条尺寸分支，
+        //    于是界面上完全看不到改动（真机截图才发现）。
+        val handicapText = if (handicap > 0) "让你 $handicap 子 · " else "不让子 · "
+        val styleText = when {
+            this != MASTER -> description
+            boardSize <= 9 -> "全力应战 · 9 路盘上不好惹"
+            else -> "全力应战 · ${boardSize} 路盘上它算不太深，但仍会咬人"
+        }
+        return handicapText + styleText
     }
 
     companion object {
