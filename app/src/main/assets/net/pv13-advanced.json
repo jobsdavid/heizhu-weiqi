@@ -5,7 +5,7 @@
   {
    "name": "stem.w",
    "shape": [
-    64,
+    96,
     3,
     3,
     3
@@ -15,196 +15,196 @@
   {
    "name": "stem.b",
    "shape": [
-    64
+    96
    ],
-   "offset": 1728
+   "offset": 2592
   },
   {
    "name": "block0.c1.w",
    "shape": [
-    64,
-    64,
+    96,
+    96,
     3,
     3
    ],
-   "offset": 1792
+   "offset": 2688
   },
   {
    "name": "block0.c1.b",
    "shape": [
-    64
+    96
    ],
-   "offset": 38656
+   "offset": 85632
   },
   {
    "name": "block0.c2.w",
    "shape": [
-    64,
-    64,
+    96,
+    96,
     3,
     3
    ],
-   "offset": 38720
+   "offset": 85728
   },
   {
    "name": "block0.c2.b",
    "shape": [
-    64
+    96
    ],
-   "offset": 75584
+   "offset": 168672
   },
   {
    "name": "block1.c1.w",
    "shape": [
-    64,
-    64,
+    96,
+    96,
     3,
     3
    ],
-   "offset": 75648
+   "offset": 168768
   },
   {
    "name": "block1.c1.b",
    "shape": [
-    64
+    96
    ],
-   "offset": 112512
+   "offset": 251712
   },
   {
    "name": "block1.c2.w",
    "shape": [
-    64,
-    64,
+    96,
+    96,
     3,
     3
    ],
-   "offset": 112576
+   "offset": 251808
   },
   {
    "name": "block1.c2.b",
    "shape": [
-    64
+    96
    ],
-   "offset": 149440
+   "offset": 334752
   },
   {
    "name": "block2.c1.w",
    "shape": [
-    64,
-    64,
+    96,
+    96,
     3,
     3
    ],
-   "offset": 149504
+   "offset": 334848
   },
   {
    "name": "block2.c1.b",
    "shape": [
-    64
+    96
    ],
-   "offset": 186368
+   "offset": 417792
   },
   {
    "name": "block2.c2.w",
    "shape": [
-    64,
-    64,
+    96,
+    96,
     3,
     3
    ],
-   "offset": 186432
+   "offset": 417888
   },
   {
    "name": "block2.c2.b",
    "shape": [
-    64
+    96
    ],
-   "offset": 223296
+   "offset": 500832
   },
   {
    "name": "block3.c1.w",
    "shape": [
-    64,
-    64,
+    96,
+    96,
     3,
     3
    ],
-   "offset": 223360
+   "offset": 500928
   },
   {
    "name": "block3.c1.b",
    "shape": [
-    64
+    96
    ],
-   "offset": 260224
+   "offset": 583872
   },
   {
    "name": "block3.c2.w",
    "shape": [
-    64,
-    64,
+    96,
+    96,
     3,
     3
    ],
-   "offset": 260288
+   "offset": 583968
   },
   {
    "name": "block3.c2.b",
    "shape": [
-    64
+    96
    ],
-   "offset": 297152
+   "offset": 666912
   },
   {
    "name": "block4.c1.w",
    "shape": [
-    64,
-    64,
+    96,
+    96,
     3,
     3
    ],
-   "offset": 297216
+   "offset": 667008
   },
   {
    "name": "block4.c1.b",
    "shape": [
-    64
+    96
    ],
-   "offset": 334080
+   "offset": 749952
   },
   {
    "name": "block4.c2.w",
    "shape": [
-    64,
-    64,
+    96,
+    96,
     3,
     3
    ],
-   "offset": 334144
+   "offset": 750048
   },
   {
    "name": "block4.c2.b",
    "shape": [
-    64
+    96
    ],
-   "offset": 371008
+   "offset": 832992
   },
   {
    "name": "pconv.w",
    "shape": [
     16,
-    64,
+    96,
     1,
     1
    ],
-   "offset": 371072
+   "offset": 833088
   },
   {
    "name": "pconv.b",
    "shape": [
     16
    ],
-   "offset": 372096
+   "offset": 834624
   },
   {
    "name": "pout.w",
@@ -214,31 +214,31 @@
     1,
     1
    ],
-   "offset": 372112
+   "offset": 834640
   },
   {
    "name": "pout.b",
    "shape": [
     1
    ],
-   "offset": 372128
+   "offset": 834656
   },
   {
    "name": "vconv.w",
    "shape": [
     8,
-    64,
+    96,
     1,
     1
    ],
-   "offset": 372129
+   "offset": 834657
   },
   {
    "name": "vconv.b",
    "shape": [
     8
    ],
-   "offset": 372641
+   "offset": 835425
   },
   {
    "name": "vfc1.w",
@@ -246,14 +246,14 @@
     64,
     1352
    ],
-   "offset": 372649
+   "offset": 835433
   },
   {
    "name": "vfc1.b",
    "shape": [
     64
    ],
-   "offset": 459177
+   "offset": 921961
   },
   {
    "name": "vfc2.w",
@@ -261,18 +261,18 @@
     1,
     64
    ],
-   "offset": 459241
+   "offset": 922025
   },
   {
    "name": "vfc2.b",
    "shape": [
     1
    ],
-   "offset": 459305
+   "offset": 922089
   }
  ],
- "bytes": 1837224,
+ "bytes": 3688360,
  "value_scale": 10.0,
- "k_winrate": 0.3518338310490553,
+ "k_winrate": 0.39576670789051177,
  "view": "relative"
 }
