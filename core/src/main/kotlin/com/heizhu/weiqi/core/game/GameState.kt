@@ -78,17 +78,6 @@ class GameState(
      * 需要用"同档自战的黑白胜率"扫出平衡点，而不是拍一个数。
      */
     /**
-     * 让子数（handicap）。语义见 [Difficulty.handicap]：在星位摆 N 颗**玩家颜色的子**、
-     * AI 先下、不贴目。玩家是受益方，所以他执黑执白都一样。
-     *
-     * ⚠️ 刻意**不**默认从 [difficulty] 取。让子是「对局条件」，不是「AI 强度」：
-     *    · core 层要中立 —— 测试里拿 BEGINNER 当"普通难度"构造对局时，不该凭空多出两颗子；
-     *    · 语义上"让几子"由对局双方约定，与 AI 有多强是两回事（同一档也可以让不同子数）。
-     *    ⇒ 由 app 层开局时显式传 `handicap = difficulty.handicap`。
-     *    （这条是踩出来的：一开始默认从档位取，core 里 10 个既有测试立刻全红。）
-     */
-    val handicap: Int = 0,
-    /**
      * 贴目（单位：子），默认按尺寸取 [Komi.forSize]。
      *
      * ⚠️ **让子不改贴目** —— 这是实测出来的，不是随手定的。
@@ -112,58 +101,13 @@ class GameState(
     val board: Board = Board(size)
     private val scorer = Scorer(size)
 
-    init {
-        // ⚠️ 让子（handicap）：难度的最终旋钮，见 [Difficulty.handicap]。
-        //   围棋惯例是"受益方在星位先摆子，另一方先行，且不贴目"；本 app 里受益方
-        //   = 玩家（孩子），所以摆的是**玩家颜色**的子、由 AI 先下。
-        //   摆的子不进棋谱（_moves）—— 它们是起始局面而非"下过的一手"；
-        //   同时要把 lastMove / koPoint 复位，否则界面会把最后一颗让子显示成"刚下的一手"。
-        if (handicap > 0) {
-            for (idx in handicapPoints(size, handicap)) {
-                board.play(idx % size, idx / size, playerColor)
-            }
-            board.clearLastMove()
-        }
-    }
-
-    /**
-     * 让 N 子的星位（传统顺序：右上 → 左下 → 右下 → 左上 → 天元）。
-     *
-     * 9 路星位距边 2、13 路距边 3，都从棋盘尺寸推导，不写死 ——
-     * 以后加尺寸（如 19 路）时这里不必改。
-     */
-    private fun handicapPoints(size: Int, n: Int): List<Int> {
-        val e = if (size <= 9) 2 else 3
-        val far = size - 1 - e
-        val mid = size / 2
-        // 顺序 = 传统让子顺序：四角星 → 天元 → 四边星，共 9 个。
-        // 为什么需要到 9 个：实测每颗星位子只值约 +4 个百分点的胜率，
-        // 弱档要拉开到"孩子明显能赢"的量级需要 4~5 颗（见 Difficulty.handicap）。
-        return listOf(
-            e * size + far,        // 1 右上角星
-            far * size + e,        // 2 左下角星
-            far * size + far,      // 3 右下角星
-            e * size + e,          // 4 左上角星
-            mid * size + mid,      // 5 天元
-            far * size + mid,      // 6 右边星
-            e * size + mid,        // 7 左边星
-            mid * size + far,      // 8 上边星
-            mid * size + e,        // 9 下边星
-        ).take(n.coerceIn(0, 9))
-    }
 
     /** 棋谱 */
     private val _moves = ArrayList<Move>(size * size / 2)
     val moves: List<Move> get() = _moves
 
-    /**
-     * 轮到谁走。
-     *
-     * 让子棋由 **AI 先下**（受益方玩家已经在盘上摆了子，见 [handicap]），
-     * 所以这里不能简单写死 BLACK。
-     */
-    var toMove: Stone =
-        if (handicap > 0 && playerColor == Stone.BLACK) Stone.WHITE else Stone.BLACK
+    /** 轮到谁走。 */
+    var toMove: Stone = Stone.BLACK
         private set
 
     var isOver: Boolean = false

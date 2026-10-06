@@ -33,26 +33,34 @@ OPEN_RAND = int(os.environ.get("OPEN_RAND", "6"))
 # 9 路实测黑方胜率仅 30%，需要用不同贴目扫出平衡点（详见 check_komi 流程）。
 KOMI = os.environ.get("KOMI")
 
-# 让子数（仅测试用）：给白方摆 N 颗星位子。两边用同一网络时，
-# 白方胜率 = 「让 N 子」等价多少胜率 —— 档位阶梯的标尺（见 bench appMatch 的 t[8]）。
-HANDICAP = int(os.environ.get("HANDICAP", "0"))
 
 
 def one_game(job):
     """跑一局，解析 JSON。任何异常都必须显式冒出来（不许静默变成 0）。"""
-    size, ta, tb, seed, max_plies, open_rand, netA, netB, judge, komi, handicap = job
+    size, ta, tb, seed, max_plies, open_rand, netA, netB, judge, komi = job
     env = {**os.environ, "PYTHONPATH": str(ROOT / "tools/ml/pylibs")}
-    env["WEIQI_NET"] = str(netA)
-    if netB:
+    # netA = "-" 表示**不设网络** ⇒ 引擎回退到无网络的随机 rollout 路径。
+    # 用途：测"低档不用网络能不能弱到初学者可赢"（这是最弱的实现，也是最符合
+    # 「少考虑几步」的形态）。bench 的 loadNet 对不存在的文件会直接抛错，
+    # 所以只能靠"不设环境变量"来表达"没有网络"。
+    if str(netA) != "-":
+        env["WEIQI_NET"] = str(netA)
+    else:
+        # ⚠️ 必须显式删除：否则会从父进程的 os.environ 继承到（例如 shell 里设了 WEIQI_NET=-），
+        # bench 会拿 "-" 当路径去加载并抛错。
+        env.pop("WEIQI_NET", None)
+    if netB and str(netB) != "-":
         env["WEIQI_NET_B"] = str(netB)
+    else:
+        env.pop("WEIQI_NET_B", None)   # 同 netA：'-' 表示"没有网络"，不能把 '-' 当路径传下去
     if judge:
         env["WEIQI_JUDGE_NET"] = str(judge)
-    # ⚠️ handicap 是位置参数（t[8]），所以即使不覆盖贴目也要占住 t[7]：
     #    传 "-" 让 bench 的 toDoubleOrNull() 解析失败 ⇒ 走产品默认贴目。
-    komi_arg = f" {komi}" if komi is not None else " -"
+    # ⚠️ 让子已按产品决定移除（见 Difficulty.kt 的历史注释），bench 的该参数位随之取消。
+    komi_arg = f" {komi}" if komi is not None else ""
     p = subprocess.run(
         [str(BENCH)],
-        input=f"appmatch {size} {ta} {tb} {seed} {max_plies} {open_rand}{komi_arg} {handicap}\nquit\n",
+        input=f"appmatch {size} {ta} {tb} {seed} {max_plies} {open_rand}{komi_arg}\nquit\n",
         capture_output=True, text=True, env=env, timeout=3600,
     )
     for line in p.stdout.splitlines():
@@ -88,7 +96,7 @@ def main():
     print(f"══ {size} 路 {ta} vs {tb}，{games} 局（产品口径 / GameState 真实终局）══")
     print(f"   网络 {netA.name}" + (f" vs {netB.name}" if netB else "（同）") + (f"  裁判 {judge.name}" if judge else ""))
 
-    jobs = [(size, ta, tb, 1000 + i, max_plies, OPEN_RAND, netA, netB, judge, KOMI, HANDICAP)
+    jobs = [(size, ta, tb, 1000 + i, max_plies, OPEN_RAND, netA, netB, judge, KOMI)
             for i in range(games)]
     with ProcessPoolExecutor(max_workers=min(10, games)) as ex:
         results = list(ex.map(safe_one_game, jobs))

@@ -44,6 +44,18 @@ class MctsEngine(
     private val size: Int,
     private val komi: Double = Komi.forSize(size),
     /**
+     * 覆盖档位的候选数上限（`null` = 用档位自带值）。
+     *
+     * 用途：**评测脚本**要扫"候选数对棋力的影响"，而 [Difficulty] 是枚举、不能改值，
+     * 所以在这里开一个只影响评测的入口。产品不传 ⇒ 行为与原来完全一致。
+     *
+     * 为什么关心这个：低档的"弱"按用户口径应当来自**想得少**（候选更少、不做战术搜索），
+     * 而不是故意下错。实测候选数确实是最直接的"想得少"旋钮。
+     */
+    private val netTopKOverride: Int? = null,
+    /** 覆盖档位的战术辅助档位（`null` = 用档位自带值，含义见 [Difficulty.tacticAssist]）。 */
+    private val tacticAssistOverride: Int? = null,
+    /**
      * 可选的小网络（由 KataGo 蒸馏而来）。
      *
      * 给定时走「网络引导」路径：用网络策略剪枝根候选、用网络价值做一手前瞻，
@@ -227,7 +239,7 @@ class MctsEngine(
         // 收工是"盘面到底定型没有"的**事实判断**，两侧必须用同一个更宽的视野；
         // 「想得浅」仍由搜索侧体现（候选池/前瞻层数），不在这里。
         val settleCandidates = { c: Stone ->
-            collectCandidates(board, c, radius = 0, tacticAssist = difficulty.tacticAssist)
+            collectCandidates(board, c, radius = 0, tacticAssist = (tacticAssistOverride ?: difficulty.tacticAssist))
         }
         val nobodyLosesByPassing =
             !anyMoveGainsOver(board, color, settleCandidates(color), PASS_GAIN_THRESHOLD) &&
@@ -360,7 +372,7 @@ class MctsEngine(
         // 恰好把低档拖慢、把高档限制住 —— 方向整个反了。默认值加宽倍数为 1，
         // 即默认设置下各档行为与加宽前完全一致，只有用户主动调大才会变。
         val widen = (budgetMs.toDouble() / MIN_THINK_BUDGET_MS).coerceIn(1.0, 3.0)
-        val poolSize = (difficulty.netTopK * widen).toInt().coerceAtLeast(difficulty.netTopK)
+        val poolSize = ((netTopKOverride ?: difficulty.netTopK) * widen).toInt().coerceAtLeast((netTopKOverride ?: difficulty.netTopK))
         // 开局判定：与 collectCandidates 同一口径（盘上子数 < 边长）
         var netStoneCount = 0
         for (i in 0 until cellCount) if (board.cells[i].toInt() != 0) netStoneCount++
@@ -555,14 +567,14 @@ class MctsEngine(
         difficulty: Difficulty,
     ): IntArray {
         val restricted = collectCandidates(
-            board, color, difficulty.localRadius, difficulty.tacticAssist,
+            board, color, difficulty.localRadius, (tacticAssistOverride ?: difficulty.tacticAssist),
         )
         if (restricted.isNotEmpty()) return restricted
 
         // 视野限制可能把候选清空 —— 最典型的就是**开局空盘**：
         // 棋盘上一个子都没有，「棋子附近」无从谈起，于是候选为空。
         // 若不放宽限制，低难度档会在空盘上直接停一手，对局根本开不了局。
-        return collectCandidates(board, color, radius = 0, tacticAssist = difficulty.tacticAssist)
+        return collectCandidates(board, color, radius = 0, tacticAssist = (tacticAssistOverride ?: difficulty.tacticAssist))
     }
 
     /**

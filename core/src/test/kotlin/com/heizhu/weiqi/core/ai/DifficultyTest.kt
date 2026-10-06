@@ -4,31 +4,46 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 档位定义测试。重点是**让子**：它现在是难度阶梯的主要旋钮，必须可见、可核对。 */
+/**
+ * 档位定义测试。
+ *
+ * 这里只断言**结构与可核对的事实**（顺序、id 唯一、说明非空、预算递增），
+ * 因为难度阶梯的强弱是**测量出来的**（见 tools/katago/README.md 的方法论），
+ * 不是靠断言宣称的。
+ */
 class DifficultyTest {
 
+    private val ladder = listOf(
+        Difficulty.ENTRY, Difficulty.BEGINNER, Difficulty.INTERMEDIATE,
+        Difficulty.ADVANCED, Difficulty.MASTER,
+    )
+
     @Test
-    fun `每一档的说明里都必须写明让几子`() {
-        // 这条是为了防止"改了让子数却忘了改文案"——文案与数值分处两个源就一定会漂移。
-        for (d in Difficulty.entries) {
-            val text = d.descriptionFor(9)
-            if (d.handicap > 0) {
-                assertTrue("${d.displayName} 的说明应写明让 ${d.handicap} 子，实际：$text",
-                    text.contains("让你 ${d.handicap} 子"))
-            } else {
-                assertTrue("${d.displayName} 的说明应写明不让子，实际：$text", text.contains("不让子"))
-            }
+    fun `五档按固定顺序排列，且 id 唯一`() {
+        assertEquals(5, Difficulty.entries.size)
+        assertEquals(ladder, Difficulty.entries.toList())
+        assertEquals(5, ladder.map { it.id }.toSet().size)
+    }
+
+    @Test
+    fun `档位越强，思考预算越大`() {
+        val budgets = ladder.map { it.timeBudgetMs }
+        for (i in 0 until budgets.size - 1) {
+            assertTrue("预算应随档位递增：$budgets", budgets[i] < budgets[i + 1])
         }
     }
 
     @Test
-    fun `让子数随难度单调递减（越强让得越少）`() {
-        val ordered = listOf(Difficulty.ENTRY, Difficulty.BEGINNER, Difficulty.INTERMEDIATE,
-            Difficulty.ADVANCED, Difficulty.MASTER)
-        val hs = ordered.map { it.handicap }
-        assertEquals("让子数应为 5/3/2/1/0", listOf(5, 3, 2, 1, 0), hs)
-        for (i in 0 until hs.size - 1) {
-            assertTrue("档位越强让子应越少：$hs", hs[i] >= hs[i + 1])
+    fun `每一档都有说明文字，且设置页用的是 descriptionFor`() {
+        for (d in ladder) {
+            assertTrue("${d.displayName} 的说明不应为空", d.description.isNotBlank())
+            assertTrue("说明不应写死棋盘尺寸", !d.description.contains("9 路") && !d.description.contains("13 路"))
+            assertTrue("descriptionFor 应返回非空文案", d.descriptionFor(9).isNotBlank())
         }
+    }
+
+    @Test
+    fun `存损坏时回退到初级，不崩`() {
+        assertEquals(Difficulty.BEGINNER, Difficulty.fromId("不存在"))
     }
 }

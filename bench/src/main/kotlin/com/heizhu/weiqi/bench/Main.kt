@@ -416,17 +416,20 @@ private fun appMatch(t: List<String>): String {
 
     val aBlack = seed % 2 == 0L
     val komiOverride = t.getOrNull(7)?.toDoubleOrNull()
-    // 让子数（t[8]，默认 0）：给**白方**摆 N 颗星位子。因为两边用同一个网络时，
-    // 白方胜率就直接读出了「让 N 子」等价多少胜率 —— 这是档位阶梯唯一可靠的标尺，
-    // 比"换弱网络/少搜几步"那三条轴的信噪比高一个量级（那三条轴的效应都小于测量噪声）。
-    val handicap = t.getOrNull(8)?.toIntOrNull() ?: 0
     val state = if (komiOverride != null) {
-        GameState(size, diffA, Stone.WHITE, komi = komiOverride, handicap = handicap)
+        GameState(size, diffA, Stone.WHITE, komi = komiOverride)
     } else {
-        GameState(size, diffA, Stone.WHITE, handicap = handicap)
+        GameState(size, diffA, Stone.WHITE)
     }
-    val engineA = MctsEngine(size, net = netA, judgeNet = judge)
-    val engineB = MctsEngine(size, net = netB, judgeNet = judge)
+    // 评测用的档位覆盖（仅当环境变量存在时生效；产品不设 ⇒ 行为不变）。
+    // 用途：扫「候选数 / 战术辅助」对棋力的影响 —— 低档的弱应当来自"想得少"，
+    // 而 Difficulty 是枚举不能改值，所以从评测台侧开一个入口。
+    val topKOverride = System.getenv("WEIQI_OVERRIDE_TOPK")?.toIntOrNull()
+    val assistOverride = System.getenv("WEIQI_OVERRIDE_ASSIST")?.toIntOrNull()
+    val engineA = MctsEngine(size, net = netA, judgeNet = judge,
+        netTopKOverride = topKOverride, tacticAssistOverride = assistOverride)
+    val engineB = MctsEngine(size, net = netB, judgeNet = judge,
+        netTopKOverride = topKOverride, tacticAssistOverride = assistOverride)
 
     // ⚠️ 开局随机化：档位温度归零（去放水）之后，引擎对同一局面恒走同一手 ——
     // 于是自战 24 局会走出**完全相同的棋**（实测 24 局比分与手数全同），
@@ -535,7 +538,6 @@ private fun appMatch(t: List<String>): String {
         append(",\"moveColors\":\"").append(state.moves.joinToString("") { m ->
             if (m.color == Stone.BLACK) "B" else "W"
         }).append("\"")
-        append(",\"handicap\":").append(state.handicap)
         append(",\"trueEyeFills\":").append(trueEyeFills)
         append(",\"enclosedFills\":").append(enclosedFills)
         append(",\"postPassPlies\":").append(postPassPlies)

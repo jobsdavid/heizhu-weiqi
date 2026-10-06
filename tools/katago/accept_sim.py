@@ -22,8 +22,6 @@ from pathlib import Path
 K = Path(__file__).resolve().parent
 BENCH = K.parent.parent / "src/WeiqiTV/bench/build/install/bench/bin/bench"
 NETDIR = K.parent.parent / "src/WeiqiTV/app/src/main/assets/net"
-# 各档让子数（必须与 core 的 Difficulty.handicap 一致；这里显式写出来便于核对）
-HANDICAP = {"entry": 5, "beginner": 3, "intermediate": 2, "advanced": 1, "master": 0}
 LETTERS = "ABCDEFGHJKLMNOPQRST"
 
 
@@ -44,7 +42,7 @@ def play_one(size: int, tier: str, seed: int, max_plies: int = 400,
     """
     env = {**os.environ, "PYTHONPATH": str(K / "../ml/pylibs")}
     env["WEIQI_NET"] = str(net or (NETDIR / f"pv{size}-{tier}.bin"))
-    cmd = f"appmatch {size} {tier} {tier} {seed} {max_plies} {open_rand} - {HANDICAP[tier]}\nquit\n"
+    cmd = f"appmatch {size} {tier} {tier} {seed} {max_plies} {open_rand}\nquit\n"
     p = subprocess.run([str(BENCH)], input=cmd, capture_output=True, text=True, env=env, timeout=3600)
     for line in p.stdout.splitlines():
         if line.strip().startswith("{"):
@@ -55,9 +53,7 @@ def play_one(size: int, tier: str, seed: int, max_plies: int = 400,
 def print_record(g: dict) -> None:
     size = g["size"]
     idxs, cols = g["moveIdx"], g["moveColors"]
-    n = g["handicap"]
-    print(f"  ── {size} 路 · 让 {n} 子 · seed={g['seed']} ──")
-    print(f"     受让方（白）在星位有 {n} 颗子，黑方先行；两侧同网络、同预算")
+    print(f"  ── {size} 路 · {g['tierA']} · seed={g['seed']} ──")
     te = g.get("trueEyeFills", 0)
     en = g.get("enclosedFills", 0)
     pp = g.get("postPassPlies", 0)
@@ -87,7 +83,7 @@ def main() -> int:
 
     if not BENCH.exists():
         raise SystemExit(f"bench 未构建：{BENCH}")
-    tiers = list(HANDICAP) if a.all_tiers else [a.tier]
+    tiers = [d.id for d in ("entry", "beginner", "intermediate", "advanced", "master")] if a.all_tiers else [a.tier]
     for t in tiers:
         g = play_one(a.size, t, a.seed, net=Path(a.net) if a.net else None)
         print_record(g)

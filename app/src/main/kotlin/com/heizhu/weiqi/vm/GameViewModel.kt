@@ -163,10 +163,6 @@ class GameViewModel(app: Application) : AndroidViewModel(app) {
             size = boardSize,
             difficulty = difficulty,
             playerColor = playerColor,
-            // 让子（handicap）：难度阶梯的**确定性**旋钮 —— 在星位给玩家摆 N 子、AI 先下、不贴目。
-            // 为什么不用"弱网络"做阶梯：容量/数据量/搜索量三条轴实测都不单调（差异小于测量噪声）；
-            // 而让子是把目差分布的**均值**平移一个确定量，信噪比完全不同。详见 Difficulty.handicap。
-            handicap = difficulty.handicap,
         )
         game = state
         // 有蒸馏网络就用「网络引导」路径（9 路），没有就回退随机 rollout。
