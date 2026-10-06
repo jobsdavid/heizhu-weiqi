@@ -13,6 +13,9 @@ import kotlinx.coroutines.runBlocking
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import kotlin.random.Random
+import com.heizhu.weiqi.core.rules.GroupFinder
+import com.heizhu.weiqi.core.rules.BoardGeometry
+import kotlin.math.abs
 
 /**
  * 棋力评测台入口。
@@ -270,6 +273,113 @@ private fun drunkardMove(state: GameState, rng: java.util.Random): Int {
 }
 
 /**
+ * 初学者代理：模拟「刚学会规则、会吃子会逃，但不读棋」的对手。
+ *
+ * ### 为什么需要它
+ * 验证「低难度档对初学者是否可赢」时，醉汉（随机落子 + 见子就吃）太弱：
+ * 连让 5 子的入门档都 0:24 全败，证明不了任何关于「孩子能不能赢」的事。
+ * 需要一个像人、但很弱的对手作为对照。
+ *
+ * ### 决策顺序（只看当前盘面，不做任何搜索）
+ * 1. 能吃子 → 吃提子最多的那手
+ * 2. 自己有块只剩 1 气 → 去救（落子后该块气数恢复到 2 以上）
+ * 3. 对方有块只剩 2 气 → 打吃
+ * 4. 否则应手：落在上一手附近（新手「跟着走」的习惯），偏好三/四线
+ *
+ * 硬约束：不走一线；不落「落子后自己只剩 1 气且不提子」的送死点。
+ * 目标不是下得好，而是「像人、可复现」。同分候选随机，保证多局不同。
+ *
+ * @return 落子索引；-1 表示停一手（沿用引擎约定）。
+ */
+private fun beginnerMove(state: GameState, rng: java.util.Random): Int {
+    val size = state.size
+    val color = state.toMove
+    val oppColor = color.opponent
+    val cells = state.board.cells
+    val finder = GroupFinder(size)
+    val neighborBuf = IntArray(4)
+
+    fun neighborsOf(index: Int): List<Int> {
+        val n = BoardGeometry.neighbors(size, index, neighborBuf)
+        return (0 until n).map { neighborBuf[it] }
+    }
+
+    fun libertiesAt(index: Int): Int = finder.findLiberties(cells, index)
+
+    /** 到棋盘边缘的距离（1 = 一线，越大约靠中腹）。 */
+    fun edgeDistance(index: Int): Int {
+        val x = index % size
+        val y = index / size
+        return minOf(x + 1, y + 1, size - x, size - y)
+    }
+
+    /** 落子预览；非法（自杀 / 劫 / 已有子）返回 null。 */
+    fun previewAt(index: Int): PlayOutcome.Ok? {
+        val probe = Board(size)
+        probe.restoreFrom(
+            cells, state.board.koPoint, state.board.lastMove,
+            state.board.blackCaptured, state.board.whiteCaptured,
+        )
+        return probe.play(index % size, index / size, color) as? PlayOutcome.Ok
+    }
+
+    fun pick(candidates: List<Int>): Int = candidates[rng.nextInt(candidates.size)]
+
+    val emptyPoints = (0 until size * size).filter { cells[it].toInt() == 0 }
+    val legal = emptyPoints.filter { previewAt(it) != null }
+    if (legal.isEmpty()) return GameState.PASS_INDEX   // 无合法点：停一手
+
+    // 1) 能吃就吃
+    val capturing = legal.filter { previewAt(it)!!.captureCount > 0 }
+    if (capturing.isNotEmpty()) {
+        val most = capturing.maxOf { previewAt(it)!!.captureCount }
+        return pick(capturing.filter { previewAt(it)!!.captureCount == most })
+    }
+
+    // 2) 救只剩 1 气的自己块
+    val myAtariGroups = emptyPoints.filter {
+        cells[it].toInt() == color.code.toInt() && libertiesAt(it) == 1
+    }
+    if (myAtariGroups.isNotEmpty()) {
+        val rescuers = legal.filter { move ->
+            previewAt(move)!!.ownLiberties >= 2 &&
+                myAtariGroups.any { neighborsOf(it).contains(move) }
+        }
+        if (rescuers.isNotEmpty()) return pick(rescuers)
+    }
+
+    // 3) 打吃对方只剩 2 气的块
+    val oppWeakGroups = emptyPoints.filter {
+        cells[it].toInt() == oppColor.code.toInt() && libertiesAt(it) == 2
+    }
+    if (oppWeakGroups.isNotEmpty()) {
+        val ataris = legal.filter { move -> neighborsOf(move).any { oppWeakGroups.contains(it) } }
+        if (ataris.isNotEmpty()) return pick(ataris)
+    }
+
+    // 4) 应手 + 硬约束
+    fun isSafe(move: Int): Boolean {
+        if (edgeDistance(move) == 1) return false                 // 不走一线
+        val after = previewAt(move)!!
+        return after.captureCount > 0 || after.ownLiberties >= 2  // 不送死
+    }
+    val safe = legal.filter { isSafe(it) }.ifEmpty { legal }
+    val last = state.board.lastMove
+    val nearby = if (last.x >= 0) {
+        safe.filter { move ->
+            val dx = kotlin.math.abs(move % size - last.x)
+            val dy = kotlin.math.abs(move / size - last.y)
+            maxOf(dx, dy) <= 2
+        }
+    } else {
+        emptyList()
+    }
+    val preferred = nearby.ifEmpty { safe }
+    val onThirdOrFourthLine = preferred.filter { edgeDistance(it) in 3..4 }
+    return pick(onThirdOrFourthLine.ifEmpty { preferred })
+}
+
+/**
  * 贴近 app 真实流程的对局探针（与 selfplay 的关键差别）。
  *
  * · 用产品代码的 [GameState] 推进对局 —— 它带着**真实的终局判定**
@@ -290,8 +400,11 @@ private fun appMatch(t: List<String>): String {
     // "drunkard" = 醉汉模拟档（见 drunkardMove）：用来验证"不会下棋的人能否赢"
     val aDrunk = tierA == "drunkard"
     val bDrunk = tierB == "drunkard"
-    val diffA = if (aDrunk) Difficulty.ENTRY else difficultyOf(tierA)
-    val diffB = if (bDrunk) Difficulty.ENTRY else difficultyOf(tierB)
+    // "beginner" = 初学者代理（见 beginnerMove）：像人但很弱，用于验证低档是否可赢
+    val aBeg = tierA == "beginner-proxy"
+    val bBeg = tierB == "beginner-proxy"
+    val diffA = if (aDrunk || aBeg) Difficulty.ENTRY else difficultyOf(tierA)
+    val diffB = if (bDrunk || bBeg) Difficulty.ENTRY else difficultyOf(tierB)
     val seed = t.getOrNull(4)?.toLongOrNull() ?: 1L
     val maxPlies = t.getOrNull(5)?.toIntOrNull() ?: 400
     // 开局随机手数（**测试专用**，见下方注释）。默认 0 = 不随机。
@@ -350,10 +463,11 @@ private fun appMatch(t: List<String>): String {
         val engine = if (isA) engineA else engineB
         val diff = if (isA) diffA else diffB
         val isDrunk = if (isA) aDrunk else bDrunk
-        val mv = if (isDrunk) {
-            drunkardMove(state, java.util.Random(seed * 1000 + plies))
-        } else {
-            runBlocking {
+        val isBeg = if (isA) aBeg else bBeg
+        val mv = when {
+            isDrunk -> drunkardMove(state, java.util.Random(seed * 1000 + plies))
+            isBeg -> beginnerMove(state, java.util.Random(seed * 1000 + plies))
+            else -> runBlocking {
                 engine.findBestMove(state.board, color, diff, Random(seed * 1000 + plies))
             }
         }

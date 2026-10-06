@@ -14,3 +14,14 @@ local.properties
 
 # 系统
 .DS_Store
+
+# 训练/评测产物与大件（开源仓库只收脚本，见 tools/katago/README.md）
+tools/katago/*.jsonl
+tools/katago/*.bin
+tools/katago/*.pt
+tools/katago/*.gz
+tools/katago/*.log
+tools/katago/nets/
+tools/katago/cuda-libs/
+tools/katago/katago
+tools/ml/
