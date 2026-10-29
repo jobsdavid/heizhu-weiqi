@@ -19,7 +19,9 @@ OK 落子、返回键悔棋、菜单键更多。
 
 **最新版**：[github.com/jobsdavid/heizhu-weiqi/releases/latest](https://github.com/jobsdavid/heizhu-weiqi/releases/latest)
 
-当前版本 `1.0.0`，`heizhu-weiqi-1.0.0.apk`（28 MB）。
+**国内镜像**（下载更快）：[dingshift.com/dl/heizhu-weiqi-1.0.0.apk](https://dingshift.com/dl/heizhu-weiqi-1.0.0.apk)
+
+两个地址是同一个文件，校验值一致。当前版本 `1.0.0`，`heizhu-weiqi-1.0.0.apk`（28 MB）。
 
 | 项 | 值 |
 |---|---|
