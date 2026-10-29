@@ -25,3 +25,8 @@ tools/katago/nets/
 tools/katago/cuda-libs/
 tools/katago/katago
 tools/ml/
+
+# 发布签名凭据（私钥绝不入库）
+signing.properties
+*.jks
+*.keystore

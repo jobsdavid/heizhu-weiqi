@@ -13,6 +13,39 @@ OK 落子、返回键悔棋、菜单键更多。
 
 ---
 
+## 下载安装
+
+不想编译的话，直接装现成的：
+
+**最新版**：[github.com/jobsdavid/heizhu-weiqi/releases/latest](https://github.com/jobsdavid/heizhu-weiqi/releases/latest)
+
+当前版本 `1.0.0`，`heizhu-weiqi-1.0.0.apk`（28 MB）。
+
+| 项 | 值 |
+|---|---|
+| SHA-256 | `0e5e65fdb3aef6a1ce161e64680fabd16bc89319cf39d5e69bf91136a5453985` |
+| 签名证书 SHA-256 | `A0:7E:53:B5:C2:FC:22:08:D6:C2:1B:D1:5C:FB:6B:47:DC:25:8F:12:DC:AB:AA:5E:5D:27:AA:7F:0C:51:A9:00` |
+
+装到电视上有三种办法：
+
+1. **U 盘**：把 apk 拷进 U 盘，插电视，用电视自带的文件管理器打开安装。先在设置里允许「未知来源」。
+2. **电视浏览器**：在电视浏览器里打开上面的 Release 页面，点附件下载后安装。
+3. **adb**（开发者）：`adb connect <电视IP>:5555` 然后 `adb install -r heizhu-weiqi-1.0.0.apk`。
+
+升级直接覆盖安装，不用卸载。官方包用项目固定私钥签名（证书指纹见上表），所以后续版本能覆盖升级；
+从源码自己构建的包用的是另一把密钥，装过一次官方包的话两者不能互相覆盖，只能二选一。
+
+校验：
+
+```bash
+sha256sum heizhu-weiqi-1.0.0.apk
+apksigner verify --print-certs heizhu-weiqi-1.0.0.apk
+```
+
+从别处下载的包请对一下证书指纹，不一致说明不是本项目签的。
+
+---
+
 ## 功能
 
 - **人机对局**（单机单人），**9 路 / 13 路**可选
@@ -131,6 +164,11 @@ gradle :app:assembleRelease
 adb connect <电视IP>:5555
 adb install -r app/build/outputs/apk/release/app-release.apk
 ```
+
+**签名**：发布私钥不在仓库里。`app/build.gradle.kts` 依次读环境变量
+（`HEIZHU_WEIQI_STORE_FILE` / `_STORE_PASS` / `_KEY_ALIAS` / `_KEY_PASS`）与仓库外的
+`~/.hermes/workspace/weiqi-tv/secure/signing.properties`；两处都没有时 release 回退到 debug 签名，
+构建会打一条警告。回退签名能自己装、自己用，但不能覆盖官方包（签名不同系统会拒装）。
 
 APK 同时声明普通 `LAUNCHER` 与 `LEANBACK_LAUNCHER` 两个入口——小米电视的「应用」列表
 枚举的是普通 LAUNCHER，只声明 Leanback 会找不到应用。

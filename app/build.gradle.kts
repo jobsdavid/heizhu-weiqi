@@ -7,6 +7,29 @@
 import java.io.File
 import java.util.Properties
 
+// ------------------------------------------------------------
+// 发布签名凭据（私钥不进仓库）
+// ------------------------------------------------------------
+// 1) 优先读环境变量 HEIZHU_WEIQI_STORE_FILE / _STORE_PASS / _KEY_ALIAS / _KEY_PASS
+// 2) 其次读仓库外的 ~/.hermes/workspace/weiqi-tv/secure/signing.properties
+// 3) 都没有就回退 debug 签名，让任何人都能从源码构建（只是与官方包不能互相覆盖安装）
+// 官方分发版必须用固定私钥签，否则用户升级时会被系统以「签名冲突」拒绝。
+val signingProps = Properties().apply {
+    listOf(
+        File(System.getProperty("user.home"), ".hermes/workspace/weiqi-tv/secure/signing.properties"),
+        rootProject.file("signing.properties"),
+    ).firstOrNull { it.isFile }?.inputStream()?.use { load(it) }
+}
+fun signingValue(envName: String, propName: String): String? =
+    System.getenv(envName) ?: signingProps.getProperty(propName)
+
+val releaseStoreFile = signingValue("HEIZHU_WEIQI_STORE_FILE", "storeFile")
+val releaseStorePass = signingValue("HEIZHU_WEIQI_STORE_PASS", "storePassword")
+val releaseKeyAlias = signingValue("HEIZHU_WEIQI_KEY_ALIAS", "keyAlias")
+val releaseKeyPass = signingValue("HEIZHU_WEIQI_KEY_PASS", "keyPassword")
+val hasReleaseSigning = listOf(releaseStoreFile, releaseStorePass, releaseKeyAlias, releaseKeyPass)
+    .all { !it.isNullOrBlank() } && File(releaseStoreFile!!).isFile
+
 plugins {
     alias(libs.plugins.android.application)
     // 故意不应用 org.jetbrains.kotlin.android：AGP 9.0 起内置 Kotlin 支持，
@@ -25,7 +48,19 @@ android {
         minSdk = 26          // Android 8.0：2026 年旗舰电视无需向下兼容
         targetSdk = 36
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.0.0"
+    }
+
+    signingConfigs {
+        // 只有配了私钥才创建；没配时 release 回退 debug（见 buildTypes.release）
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = File(releaseStoreFile!!)
+                storePassword = releaseStorePass
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPass
+            }
+        }
     }
 
     buildTypes {
@@ -37,8 +72,13 @@ android {
             // 自用侧载，不做混淆（避免 ProGuard 误杀序列化类）
             isMinifyEnabled = false
             isShrinkResources = false
-            // 用 debug 签名，方便直接 U 盘侧载；无需配置 keystore
-            signingConfig = signingConfigs.getByName("debug")
+            // 有正式私钥用它（官方分发版），否则回退 debug 签名（源码自建者）
+            signingConfig = if (hasReleaseSigning) {
+                signingConfigs.getByName("release")
+            } else {
+                logger.warn("⚠️ 未配置发布签名，release 将使用 debug 签名：此包不能与官方版互相覆盖安装")
+                signingConfigs.getByName("debug")
+            }
         }
     }
 
